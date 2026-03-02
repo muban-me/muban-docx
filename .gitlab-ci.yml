@@ -1,0 +1,71 @@
+# muban-docx — GitLab CI/CD
+# Tests on every push, publishes to Package Registry on main
+
+stages:
+  - test
+  - publish
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  MAVEN_CLI_OPTS: "--batch-mode --errors --show-version"
+
+cache:
+  paths:
+    - .m2/repository/
+
+test:
+  stage: test
+  tags:
+    - docker
+  image: eclipse-temurin:17-jdk
+  before_script:
+    - apt-get update -q && apt-get install -y maven
+  script:
+    - mvn $MAVEN_CLI_OPTS clean verify
+  artifacts:
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml
+    expire_in: 1 week
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_COMMIT_BRANCH =~ /^feature\/.*$/
+    - if: $CI_COMMIT_BRANCH =~ /^fix\/.*$/
+
+publish:
+  stage: publish
+  tags:
+    - docker
+  image: eclipse-temurin:17-jdk
+  needs:
+    - job: test
+      artifacts: false
+  before_script:
+    - apt-get update -q && apt-get install -y maven
+    # Create Maven settings with CI job token for Package Registry auth
+    - |
+      mkdir -p ~/.m2
+      cat > ~/.m2/settings.xml <<EOF
+      <settings>
+        <servers>
+          <server>
+            <id>gitlab-muban-docx</id>
+            <configuration>
+              <httpHeaders>
+                <property>
+                  <name>Job-Token</name>
+                  <value>${CI_JOB_TOKEN}</value>
+                </property>
+              </httpHeaders>
+            </configuration>
+          </server>
+        </servers>
+      </settings>
+      EOF
+  script:
+    - mvn $MAVEN_CLI_OPTS deploy -DskipTests
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

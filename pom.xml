@@ -7,7 +7,7 @@
 
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>jar</packaging>
 
     <name>muban-docx</name>
@@ -151,4 +151,15 @@
             </plugin>
         </plugins>
     </build>
+
+    <distributionManagement>
+        <repository>
+            <id>gitlab-muban-docx</id>
+            <url>https://git.rzakbrodalko.pl/api/v4/projects/63/packages/maven</url>
+        </repository>
+        <snapshotRepository>
+            <id>gitlab-muban-docx</id>
+            <url>https://git.rzakbrodalko.pl/api/v4/projects/63/packages/maven</url>
+        </snapshotRepository>
+    </distributionManagement>
 </project>
