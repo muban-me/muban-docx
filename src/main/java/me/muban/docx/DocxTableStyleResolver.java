@@ -21,7 +21,7 @@ import java.util.Map;
  * first column, etc.). The docx4j XSL-FO export pipeline does not resolve style-based
  * table properties, so this utility flattens them into direct properties before PDF export.
  *
- * <h3>Resolved properties:</h3>
+ * <p><b>Resolved properties:</b></p>
  * <ul>
  *   <li><b>Table borders</b> — from {@code Style.getTblPr().getTblBorders()}</li>
  *   <li><b>Cell shading</b> — background colors from default, banding, and positional styles</li>
@@ -29,7 +29,7 @@ import java.util.Map;
  *   <li><b>Text formatting</b> — bold, italic, color, size from conditional RPr</li>
  * </ul>
  *
- * <h3>Supported conditional types:</h3>
+ * <p><b>Supported conditional types:</b></p>
  * <p>firstRow, lastRow, firstCol, lastCol, banding (horizontal and vertical),
  * corner cells (NE, NW, SE, SW), and wholeTable defaults.
  *

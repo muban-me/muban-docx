@@ -31,7 +31,7 @@ import java.util.regex.Pattern;
  *   <li><b>Export</b> — save to DOCX or PDF</li>
  * </ol>
  *
- * <h3>Quick start:</h3>
+ * <p><b>Quick start:</b></p>
  * <pre>{@code
  * Map<String, Object> data = Map.of(
  *     "recipientName", "Jan Kowalski",

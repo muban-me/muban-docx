@@ -39,7 +39,7 @@ import java.util.regex.Pattern;
  * the alt text must start with {@code image:} followed by a key name. For example,
  * an image with alt text {@code image:facsimile} is a placeholder for the "facsimile" image.
  *
- * <h3>Expression support:</h3>
+ * <p><b>Expression support:</b></p>
  * <p>The key (text after {@code image:}) may contain {@code ${...}} SpEL expressions which are
  * evaluated against the raw context before the resolution cascade runs. This allows template
  * designers to embed conditional logic directly in the alt text:</p>
@@ -49,7 +49,7 @@ import java.util.regex.Pattern;
  * image:assets/${department}/stamp.png
  * </pre>
  *
- * <h3>Resolution cascade (highest priority first):</h3>
+ * <p><b>Resolution cascade (highest priority first):</b></p>
  * <ol>
  *   <li><b>Inline Base64</b> — context value starting with {@code data:image/} is decoded as a data URI</li>
  *   <li><b>URL</b> — context value starting with {@code http://} or {@code https://} is fetched via HTTP GET</li>
@@ -175,7 +175,7 @@ public final class DocxImageReplacer {
      * <p>Scans all images in the document (body, headers, footers) for alt text matching
      * the {@code image:{key}} convention. Returns the set of discovered image keys.
      *
-     * <h3>Extraction rules:</h3>
+     * <p><b>Extraction rules:</b></p>
      * <ul>
      *   <li>{@code image:facsimile} — direct key → extracts {@code "facsimile"}</li>
      *   <li>{@code image:${photo}} — single simple variable → extracts {@code "photo"}</li>

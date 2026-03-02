@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
  * a document based on runtime data values. The markers must be placed in <b>their own
  * paragraphs</b> (dedicated lines in the Word document).
  *
- * <h3>Syntax</h3>
+ * <p><b>Syntax:</b></p>
  * <pre>
  * #{if customer_debt &gt; 1000}
  * This paragraph will only appear when customer_debt exceeds 1000.
@@ -31,7 +31,7 @@ import java.util.regex.Pattern;
  *
  * <p>The {@code #{else}} marker is optional.
  *
- * <h3>Expression evaluation</h3>
+ * <p><b>Expression evaluation:</b></p>
  * <p>The expression inside {@code #{if ...}} is evaluated via {@link DocxExpressionEvaluator}
  * with the same SpEL security sandbox as {@code ${...}} placeholders. The result is coerced
  * to a boolean:
