@@ -1197,6 +1197,99 @@ class DocxImageReplacerTest {
         }
     }
 
+    // ==================== EXTRACT IMAGE EXPRESSION VARIABLES ====================
+
+    @Nested
+    @DisplayName("extractImageExpressionVariables()")
+    class ExtractImageExpressionVariablesTests {
+
+        @Test
+        @DisplayName("should extract variables from complex SpEL expression")
+        void shouldExtractFromComplexExpression() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage(
+                    "image:${gender == 'F' ? 'assets/female.png' : 'assets/male.png'}");
+
+            Set<String> vars = DocxImageReplacer.extractImageExpressionVariables(pkg);
+
+            assertThat(vars).containsExactly("gender");
+        }
+
+        @Test
+        @DisplayName("should extract variables from mixed path expression")
+        void shouldExtractFromMixedPath() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:assets/${department}/stamp.png");
+
+            Set<String> vars = DocxImageReplacer.extractImageExpressionVariables(pkg);
+
+            assertThat(vars).containsExactly("department");
+        }
+
+        @Test
+        @DisplayName("should return empty for direct image key")
+        void shouldReturnEmptyForDirectKey() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:logo");
+
+            Set<String> vars = DocxImageReplacer.extractImageExpressionVariables(pkg);
+
+            assertThat(vars).isEmpty();
+        }
+
+        @Test
+        @DisplayName("should return empty for simple variable key")
+        void shouldReturnEmptyForSimpleVariable() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:${photo}");
+
+            Set<String> vars = DocxImageReplacer.extractImageExpressionVariables(pkg);
+
+            assertThat(vars).isEmpty();
+        }
+
+        @Test
+        @DisplayName("should skip non-image alt text")
+        void shouldSkipNonImageAltText() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("just-a-description");
+
+            Set<String> vars = DocxImageReplacer.extractImageExpressionVariables(pkg);
+
+            assertThat(vars).isEmpty();
+        }
+
+        @Test
+        @DisplayName("should combine variables from multiple images")
+        void shouldCombineFromMultipleImages() throws Exception {
+            WordprocessingMLPackage pkg = WordprocessingMLPackage.createPackage();
+            MainDocumentPart main = pkg.getMainDocumentPart();
+            long idCounter = 1;
+
+            String[] altTexts = {
+                    "image:${gender == 'F' ? 'f.png' : 'm.png'}",
+                    "image:${active ? 'yes.png' : 'no.png'}",
+                    "image:logo"
+            };
+
+            for (String altText : altTexts) {
+                R run = new R();
+                Drawing drawing = new Drawing();
+                var inline = new org.docx4j.dml.wordprocessingDrawing.Inline();
+                inline.setDocPr(new org.docx4j.dml.CTNonVisualDrawingProps());
+                inline.getDocPr().setId(idCounter);
+                inline.getDocPr().setName("img" + idCounter);
+                inline.getDocPr().setDescr(altText);
+                drawing.getAnchorOrInline().add(inline);
+                run.getContent().add(drawing);
+
+                P para = new P();
+                para.getContent().add(run);
+                main.getContent().add(para);
+                idCounter += 2;
+            }
+
+            Set<String> vars = DocxImageReplacer.extractImageExpressionVariables(pkg);
+
+            assertThat(vars).containsExactlyInAnyOrder("gender", "active");
+        }
+    }
+
     // ==================== SECURITY ====================
 
     @Nested

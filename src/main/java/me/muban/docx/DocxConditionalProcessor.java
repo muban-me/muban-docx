@@ -6,9 +6,11 @@ import org.docx4j.wml.R;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -295,6 +297,51 @@ public final class DocxConditionalProcessor {
             }
 
             i++;
+        }
+    }
+
+    // ==================== VARIABLE EXTRACTION ====================
+
+    /**
+     * Extract variable references from all {@code #{if expr}} conditional markers
+     * found in a content tree.
+     *
+     * <p>Scans paragraphs for {@code #{if ...}} markers (same pattern as runtime processing)
+     * and delegates to {@link DocxExpressionEvaluator#extractVariableReferences(String)}
+     * to parse variable identifiers from each expression.
+     *
+     * <p>This method does <b>not</b> modify the content — it is read-only and intended
+     * for use during template upload to discover referenced variables.
+     *
+     * @param content the content list to scan (body, header/footer, table cell, etc.)
+     * @return ordered set of variable names referenced in conditional expressions
+     */
+    public static Set<String> extractConditionalVariables(List<Object> content) {
+        Set<String> variables = new LinkedHashSet<>();
+        collectConditionalVariables(content, variables);
+        return variables;
+    }
+
+    /**
+     * Recursively collect variable references from conditional markers.
+     */
+    private static void collectConditionalVariables(List<Object> content, Set<String> variables) {
+        for (Object obj : content) {
+            Object unwrapped = DocxXmlUtils.unwrap(obj);
+
+            if (unwrapped instanceof P paragraph) {
+                joinConditionalRuns(paragraph);
+                String text = DocxXmlUtils.extractAllText(List.of(paragraph)).trim();
+                Matcher ifMatcher = IF_PATTERN.matcher(text);
+                if (ifMatcher.matches()) {
+                    String expression = ifMatcher.group(1).trim();
+                    variables.addAll(DocxExpressionEvaluator.extractVariableReferences(expression));
+                }
+            }
+
+            if (unwrapped instanceof ContentAccessor accessor && !(unwrapped instanceof P)) {
+                collectConditionalVariables(accessor.getContent(), variables);
+            }
         }
     }
 

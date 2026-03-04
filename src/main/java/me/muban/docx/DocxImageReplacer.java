@@ -180,7 +180,8 @@ public final class DocxImageReplacer {
      *   <li>{@code image:facsimile} — direct key → extracts {@code "facsimile"}</li>
      *   <li>{@code image:${photo}} — single simple variable → extracts {@code "photo"}</li>
      *   <li>{@code image:${items.photo}} — single dot-notation variable → extracts {@code "items.photo"}</li>
-     *   <li>{@code image:${gender == 'F' ? 'a.png' : 'b.png'}} — complex expression → skipped</li>
+     *   <li>{@code image:${gender == 'F' ? 'a.png' : 'b.png'}} — complex expression → skipped
+     *       (use {@link #extractImageExpressionVariables} to get referenced variables)</li>
      *   <li>{@code image:assets/${dept}/stamp.png} — mixed literal + expression → skipped</li>
      * </ul>
      *
@@ -189,64 +190,127 @@ public final class DocxImageReplacer {
      */
     public static Set<String> extractImageKeys(WordprocessingMLPackage wordPackage) {
         Set<String> imageKeys = new java.util.LinkedHashSet<>();
-        MainDocumentPart mainPart = wordPackage.getMainDocumentPart();
-
-        // Scan main document body
-        collectImageKeys(mainPart.getContent(), imageKeys);
-
-        // Scan headers and footers
-        try {
-            if (wordPackage.getDocumentModel() != null) {
-                for (var section : wordPackage.getDocumentModel().getSections()) {
-                    var hfp = section.getHeaderFooterPolicy();
-                    if (hfp == null) continue;
-                    collectImageKeysFromHeaderFooter(hfp.getDefaultHeader(), imageKeys);
-                    collectImageKeysFromHeaderFooter(hfp.getDefaultFooter(), imageKeys);
-                    collectImageKeysFromHeaderFooter(hfp.getFirstHeader(), imageKeys);
-                    collectImageKeysFromHeaderFooter(hfp.getFirstFooter(), imageKeys);
-                    collectImageKeysFromHeaderFooter(hfp.getEvenHeader(), imageKeys);
-                    collectImageKeysFromHeaderFooter(hfp.getEvenFooter(), imageKeys);
+        scanImageAltTexts(wordPackage, (imageKey) -> {
+            if (!imageKey.contains("${")) {
+                // Direct key: image:facsimile
+                imageKeys.add(imageKey);
+            } else {
+                // Check for single ${simpleKey} pattern (entire key is one placeholder)
+                Matcher m = SPEL_PATTERN.matcher(imageKey);
+                if (m.matches()) {
+                    String body = m.group(1).trim();
+                    if (!DocxExpressionEvaluator.isExpression(body)) {
+                        imageKeys.add(body);
+                    }
                 }
+                // Mixed content or complex expression → skipped
             }
-        } catch (Exception e) {
-            log.debug("Could not scan headers/footers for image keys: {}", e.getMessage());
-        }
-
+        });
         log.debug("Extracted {} image keys from DOCX template: {}", imageKeys.size(), imageKeys);
         return imageKeys;
     }
 
     /**
-     * Recursively collect image keys from a content tree.
+     * Extract variable references from complex SpEL expressions in image alt texts.
+     *
+     * <p>Complements {@link #extractImageKeys} by returning variables referenced in
+     * complex image expressions — those that {@code extractImageKeys} deliberately skips.
+     * These variables are <b>not</b> image parameters; they are regular "Object" type
+     * parameters that influence image selection logic.
+     *
+     * <p><b>Examples:</b></p>
+     * <ul>
+     *   <li>{@code image:${gender == 'F' ? 'a.png' : 'b.png'}} → {@code ["gender"]}</li>
+     *   <li>{@code image:${risk > 80 ? 'warn.png' : 'info.png'}} → {@code ["risk"]}</li>
+     *   <li>{@code image:facsimile} → nothing (direct key, handled by extractImageKeys)</li>
+     *   <li>{@code image:${photo}} → nothing (simple variable, handled by extractImageKeys)</li>
+     * </ul>
+     *
+     * @param wordPackage the loaded DOCX template
+     * @return ordered set of variable names from complex image expressions
      */
-    private static void collectImageKeys(List<Object> content, Set<String> imageKeys) {
+    public static Set<String> extractImageExpressionVariables(WordprocessingMLPackage wordPackage) {
+        Set<String> variables = new java.util.LinkedHashSet<>();
+        scanImageAltTexts(wordPackage, (imageKey) -> {
+            if (!imageKey.contains("${")) return;
+
+            // Check if the entire imageKey is a single simple ${variable}
+            Matcher fullMatch = SPEL_PATTERN.matcher(imageKey);
+            if (fullMatch.matches()) {
+                String body = fullMatch.group(1).trim();
+                if (!DocxExpressionEvaluator.isExpression(body)) {
+                    // Simple variable like ${photo} — handled by extractImageKeys as Image type
+                    return;
+                }
+                // Complex expression like ${gender == 'F' ? ...} — extract variables
+                variables.addAll(DocxExpressionEvaluator.extractVariableReferences(body));
+            } else {
+                // Mixed content like assets/${department}/stamp.png — extract all embedded variables
+                Matcher finder = SPEL_PATTERN.matcher(imageKey);
+                while (finder.find()) {
+                    String body = finder.group(1).trim();
+                    variables.addAll(DocxExpressionEvaluator.extractVariableReferences(body));
+                }
+            }
+        });
+        if (!variables.isEmpty()) {
+            log.debug("Extracted {} expression variables from image alt texts: {}", variables.size(), variables);
+        }
+        return variables;
+    }
+
+    /**
+     * Scan all image alt texts matching {@code image:{key}} convention and invoke
+     * the consumer for each discovered image key (text after the prefix).
+     */
+    private static void scanImageAltTexts(WordprocessingMLPackage wordPackage,
+                                           java.util.function.Consumer<String> keyConsumer) {
+        MainDocumentPart mainPart = wordPackage.getMainDocumentPart();
+        collectImageAltTexts(mainPart.getContent(), keyConsumer);
+
+        try {
+            if (wordPackage.getDocumentModel() != null) {
+                for (var section : wordPackage.getDocumentModel().getSections()) {
+                    var hfp = section.getHeaderFooterPolicy();
+                    if (hfp == null) continue;
+                    collectImageAltTextsFromHeaderFooter(hfp.getDefaultHeader(), keyConsumer);
+                    collectImageAltTextsFromHeaderFooter(hfp.getDefaultFooter(), keyConsumer);
+                    collectImageAltTextsFromHeaderFooter(hfp.getFirstHeader(), keyConsumer);
+                    collectImageAltTextsFromHeaderFooter(hfp.getFirstFooter(), keyConsumer);
+                    collectImageAltTextsFromHeaderFooter(hfp.getEvenHeader(), keyConsumer);
+                    collectImageAltTextsFromHeaderFooter(hfp.getEvenFooter(), keyConsumer);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not scan headers/footers for image alt texts: {}", e.getMessage());
+        }
+    }
+
+    private static void collectImageAltTexts(List<Object> content,
+                                              java.util.function.Consumer<String> keyConsumer) {
         for (Object obj : content) {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
             if (unwrapped instanceof R run) {
-                collectImageKeysFromRun(run, imageKeys);
+                collectImageAltTextsFromRun(run, keyConsumer);
             } else if (unwrapped instanceof ContentAccessor accessor) {
-                collectImageKeys(accessor.getContent(), imageKeys);
+                collectImageAltTexts(accessor.getContent(), keyConsumer);
             }
         }
     }
 
-    /**
-     * Collect image keys from a header or footer part.
-     */
-    private static void collectImageKeysFromHeaderFooter(Object headerOrFooterPart, Set<String> imageKeys) {
+    private static void collectImageAltTextsFromHeaderFooter(Object headerOrFooterPart,
+                                                              java.util.function.Consumer<String> keyConsumer) {
         if (headerOrFooterPart == null) return;
         if (headerOrFooterPart instanceof JaxbXmlPart<?> jaxbPart) {
             Object jaxbContent = jaxbPart.getJaxbElement();
             if (jaxbContent instanceof ContentAccessor accessor) {
-                collectImageKeys(accessor.getContent(), imageKeys);
+                collectImageAltTexts(accessor.getContent(), keyConsumer);
             }
         }
     }
 
-    /**
-     * Extract image keys from Drawing elements within a run.
-     */
-    private static void collectImageKeysFromRun(R run, Set<String> imageKeys) {
+    private static void collectImageAltTextsFromRun(R run,
+                                                     java.util.function.Consumer<String> keyConsumer) {
         for (Object obj : run.getContent()) {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
             if (!(unwrapped instanceof Drawing drawing)) continue;
@@ -261,26 +325,12 @@ public final class DocxImageReplacer {
                 }
 
                 if (docPr == null) continue;
-
                 String altText = docPr.getDescr();
                 if (altText == null || !altText.startsWith(IMAGE_PREFIX)) continue;
 
                 String imageKey = altText.substring(IMAGE_PREFIX.length()).trim();
-                if (imageKey.isEmpty()) continue;
-
-                if (!imageKey.contains("${")) {
-                    // Direct key: image:facsimile
-                    imageKeys.add(imageKey);
-                } else {
-                    // Check for single ${simpleKey} pattern (entire key is one placeholder)
-                    Matcher m = SPEL_PATTERN.matcher(imageKey);
-                    if (m.matches()) {
-                        String body = m.group(1).trim();
-                        if (!DocxExpressionEvaluator.isExpression(body)) {
-                            imageKeys.add(body);
-                        }
-                    }
-                    // Mixed content or complex expression → skip
+                if (!imageKey.isEmpty()) {
+                    keyConsumer.accept(imageKey);
                 }
             }
         }

@@ -10,8 +10,11 @@ import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.SimpleEvaluationContext;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -32,6 +35,32 @@ public class DocxExpressionEvaluator {
     private static final Logger log = LoggerFactory.getLogger(DocxExpressionEvaluator.class);
     private static final ExpressionParser PARSER = new SpelExpressionParser();
     private static final Pattern SIMPLE_KEY_PATTERN = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*");
+
+    /**
+     * Pattern matching identifiers in SpEL expressions: sequences of letters, digits,
+     * underscores and dots that start with a letter or underscore.
+     */
+    private static final Pattern IDENTIFIER_PATTERN =
+            Pattern.compile("[a-zA-Z_][a-zA-Z0-9_.]*");
+
+    /**
+     * SpEL keywords and literals that should not be treated as variable references.
+     */
+    private static final Set<String> SPEL_KEYWORDS = Set.of(
+            "true", "false", "null",
+            "new", "instanceof", "T",
+            "and", "or", "not",
+            "eq", "ne", "lt", "gt", "le", "ge",
+            "div", "mod",
+            "matches", "between"
+    );
+
+    /**
+     * Pattern to strip string literals (single- and double-quoted) from expressions
+     * before scanning for identifiers. Handles escaped quotes.
+     */
+    private static final Pattern STRING_LITERAL_PATTERN =
+            Pattern.compile("'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"");
 
     private DocxExpressionEvaluator() {}
 
@@ -76,5 +105,70 @@ public class DocxExpressionEvaluator {
             log.warn("SpEL expression evaluation failed for '{}': {}", expression, e.getMessage());
             return "${" + expression + "}";
         }
+    }
+
+    /**
+     * Extract variable references from a SpEL expression string.
+     *
+     * <p>Uses a regex heuristic: finds all identifier tokens, strips those inside
+     * string literals, removes SpEL keywords ({@code true}, {@code false}, {@code null},
+     * {@code and}, {@code or}, etc.), and removes method names (identifiers immediately
+     * followed by {@code (}).
+     *
+     * <p>Examples:
+     * <ul>
+     *   <li>{@code "available > 10 ? \"many\" : small_amount_desc"}
+     *       → {@code ["available", "small_amount_desc"]}</li>
+     *   <li>{@code "debt > 1000"} → {@code ["debt"]}</li>
+     *   <li>{@code "active && verified"} → {@code ["active", "verified"]}</li>
+     *   <li>{@code "name.toUpperCase()"} → {@code []} (method call — variable discovery
+     *       relies on other occurrences of {@code name} in the template)</li>
+     *   <li>{@code "price * quantity"} → {@code ["price", "quantity"]}</li>
+     *   <li>{@code "gender == 'F' ? 'a.png' : 'b.png'"} → {@code ["gender"]}</li>
+     * </ul>
+     *
+     * <p><b>Method calls are skipped entirely</b> — {@code items.size()} does not extract
+     * {@code items} because data arrays are already discovered through their field references
+     * (e.g., {@code items.name}, {@code items.price}) in table placeholders.
+     *
+     * @param expression the SpEL expression (without {@code ${}} or {@code #{if}} delimiters)
+     * @return ordered set of variable names found, never null
+     */
+    public static Set<String> extractVariableReferences(String expression) {
+        if (expression == null || expression.isBlank()) {
+            return Collections.emptySet();
+        }
+
+        // Step 1: Remove string literals so we don't pick up identifiers inside quotes
+        String stripped = STRING_LITERAL_PATTERN.matcher(expression).replaceAll(" ");
+
+        // Step 2: Find all identifier tokens
+        Set<String> variables = new LinkedHashSet<>();
+        Matcher matcher = IDENTIFIER_PATTERN.matcher(stripped);
+
+        while (matcher.find()) {
+            String token = matcher.group();
+            int end = matcher.end();
+
+            // Skip method calls entirely: identifier immediately followed by '('
+            // e.g., "items.size()" or "name.toUpperCase()" — the object part is NOT
+            // extracted because we cannot distinguish scalar variables (name) from
+            // data arrays (items) at this level. Arrays are discovered via their
+            // field placeholders (items.name, items.price) in table rows.
+            if (end < stripped.length() && stripped.charAt(end) == '(') {
+                continue;
+            }
+
+            // Skip SpEL keywords
+            if (SPEL_KEYWORDS.contains(token)) {
+                continue;
+            }
+
+            // Skip pure numeric-looking tokens after a dot (e.g., shouldn't happen with our
+            // pattern, but guard against "10.0" being partially matched)
+            variables.add(token);
+        }
+
+        return variables;
     }
 }
