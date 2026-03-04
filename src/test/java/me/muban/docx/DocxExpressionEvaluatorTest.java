@@ -445,4 +445,217 @@ class DocxExpressionEvaluatorTest {
             assertThat(result).isEqualTo("live");
         }
     }
+
+    // ==================== extractVariableReferences() ====================
+
+    @Nested
+    @DisplayName("extractVariableReferences() — variable extraction from SpEL")
+    class ExtractVariableReferencesTests {
+
+        @Test
+        @DisplayName("simple variable name")
+        void simpleVariable() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("name"))
+                    .containsExactly("name");
+        }
+
+        @Test
+        @DisplayName("dotted variable name")
+        void dottedVariable() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("address.city"))
+                    .containsExactly("address.city");
+        }
+
+        @Test
+        @DisplayName("comparison expression extracts both sides")
+        void comparisonExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("available > 10"))
+                    .containsExactly("available");
+        }
+
+        @Test
+        @DisplayName("ternary with variable in else branch")
+        void ternaryWithVariableInElse() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "available > 10 ? \"many\" : small_amount_desc"))
+                    .containsExactly("available", "small_amount_desc");
+        }
+
+        @Test
+        @DisplayName("ternary with string literals only — no false positives")
+        void ternaryWithStringLiteralsOnly() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "gender == 'F' ? 'Mrs.' : 'Mr.'"))
+                    .containsExactly("gender");
+        }
+
+        @Test
+        @DisplayName("logical AND with two variables")
+        void logicalAndExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("active && verified"))
+                    .containsExactly("active", "verified");
+        }
+
+        @Test
+        @DisplayName("logical OR with two variables")
+        void logicalOrExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("active || backup"))
+                    .containsExactly("active", "backup");
+        }
+
+        @Test
+        @DisplayName("negation extracts variable")
+        void negationExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("!expired"))
+                    .containsExactly("expired");
+        }
+
+        @Test
+        @DisplayName("arithmetic extracts both operands")
+        void arithmeticExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("price * quantity"))
+                    .containsExactly("price", "quantity");
+        }
+
+        @Test
+        @DisplayName("method call — entire token skipped")
+        void methodCallExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("name.toUpperCase()"))
+                    .isEmpty();
+        }
+
+        @Test
+        @DisplayName("chained method call — entire token skipped")
+        void chainedMethodCall() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("name.trim().toUpperCase()"))
+                    .isEmpty();
+        }
+
+        @Test
+        @DisplayName("string concatenation with variables")
+        void stringConcatenation() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "firstName + ' ' + lastName"))
+                    .containsExactly("firstName", "lastName");
+        }
+
+        @Test
+        @DisplayName("complex ternary with comparison and variables")
+        void complexTernary() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "debt > 1000 ? overdue_msg : normal_msg"))
+                    .containsExactly("debt", "overdue_msg", "normal_msg");
+        }
+
+        @Test
+        @DisplayName("SpEL keyword 'true' is not extracted as variable")
+        void spelKeywordTrue() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("active == true"))
+                    .containsExactly("active");
+        }
+
+        @Test
+        @DisplayName("SpEL keyword 'false' is not extracted as variable")
+        void spelKeywordFalse() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("active == false"))
+                    .containsExactly("active");
+        }
+
+        @Test
+        @DisplayName("SpEL keyword 'null' is not extracted as variable")
+        void spelKeywordNull() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("value != null"))
+                    .containsExactly("value");
+        }
+
+        @Test
+        @DisplayName("SpEL textual operators (and, or, not) are not extracted")
+        void spelTextualOperators() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "active and verified or not expired"))
+                    .containsExactly("active", "verified", "expired");
+        }
+
+        @Test
+        @DisplayName("null input returns empty set")
+        void nullInput() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(null)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("blank input returns empty set")
+        void blankInput() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("   ")).isEmpty();
+        }
+
+        @Test
+        @DisplayName("pure string literal returns empty set")
+        void pureStringLiteral() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("'hello world'")).isEmpty();
+        }
+
+        @Test
+        @DisplayName("numeric comparison with decimal — no false identifiers")
+        void numericComparison() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("price > 10.50"))
+                    .containsExactly("price");
+        }
+
+        @Test
+        @DisplayName("double-quoted strings inside expression are excluded")
+        void doubleQuotedStrings() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "status == \"active\" ? \"yes\" : \"no\""))
+                    .containsExactly("status");
+        }
+
+        @Test
+        @DisplayName("image-style conditional expression")
+        void imageConditionalExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "gender == 'F' ? 'assets/female.png' : 'assets/male.png'"))
+                    .containsExactly("gender");
+        }
+
+        @Test
+        @DisplayName("mixed path with embedded expression")
+        void mixedPathExpression() {
+            // "assets/${dept}/stamp.png" — when extracted from ${...} the body is just "dept"
+            // but for the dept variable in a larger expression:
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("dept"))
+                    .containsExactly("dept");
+        }
+
+        @Test
+        @DisplayName("equals method call on string literal")
+        void equalsMethodOnLiteral() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "\"active\".equals(status)"))
+                    .containsExactly("status");
+        }
+
+        @Test
+        @DisplayName("multiple comparisons with logical operators")
+        void multipleComparisons() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "age >= 18 && income > 50000 && !blacklisted"))
+                    .containsExactly("age", "income", "blacklisted");
+        }
+
+        @Test
+        @DisplayName("no duplicates in result")
+        void noDuplicates() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "total > 0 ? total : 0"))
+                    .containsExactly("total");
+        }
+
+        @Test
+        @DisplayName("size() method call on collection — entire token skipped")
+        void sizeMethodCall() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "items.size() > 3 ? 'many' : 'few'"))
+                    .isEmpty();
+        }
+    }
 }
