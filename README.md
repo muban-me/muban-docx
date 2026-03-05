@@ -29,7 +29,7 @@ table row replication, dynamic image replacement, and PDF export via docx4j + Ap
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
@@ -176,4 +176,4 @@ mvn clean verify
 
 This project is licensed under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
 
-Copyright (c) 2025 [muban.me](https://muban.me)
+Copyright (c) 2025–2026 [muban.me](https://muban.me)
