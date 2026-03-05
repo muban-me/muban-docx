@@ -158,6 +158,18 @@
         </plugins>
     </build>
 
+    <!-- GitLab Package Registry — used by CI publish job -->
+    <distributionManagement>
+        <repository>
+            <id>gitlab-muban-docx</id>
+            <url>https://git.rzakbrodalko.pl/api/v4/projects/63/packages/maven</url>
+        </repository>
+        <snapshotRepository>
+            <id>gitlab-muban-docx</id>
+            <url>https://git.rzakbrodalko.pl/api/v4/projects/63/packages/maven</url>
+        </snapshotRepository>
+    </distributionManagement>
+
     <profiles>
         <!-- Activate with: mvn clean deploy -Prelease -->
         <profile>
