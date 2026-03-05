@@ -7,7 +7,7 @@ table row replication, dynamic image replacement, and PDF export via docx4j + Ap
 
 | Feature | Description |
 | --- | --- |
-| **SpEL expressions** | `${name}`, `${price * qty}`, `${amount.format('%.2f')}` — powered by Spring Expression Language with a sandboxed evaluator |
+| **SpEL expressions** | `${name}`, `${price * qty}`, `${price > 1000 ? 'Premium' : 'Standard'}` — powered by Spring Expression Language with a sandboxed evaluator |
 | **Conditional blocks** | `#{if expr}` / `#{else}` / `#{fi}` — paragraph-level conditionals with boolean coercion |
 | **Table row replication** | Automatically clone template rows for array data (`${items.name}`) |
 | **Dynamic images** | Replace placeholder images via data-URI, URL, relative path, or SpEL expression in alt-text |
@@ -118,14 +118,14 @@ The engine detects the array binding and replicates the row for each element.
 
 ### Dynamic images
 
-Insert a placeholder image in the DOCX and set its **alt-text** to one of:
+Insert a placeholder image in the DOCX and set its **alt-text** to `image:{key}`, where `{key}` identifies the image to replace. The key is resolved via the following cascade:
 
-| Alt-text format | Description |
+| Alt-text example | Resolution |
 | --- | --- |
-| `${fieldName}` | Resolved from context (base64, data-URI, or relative path) |
-| `url:https://...` | Fetched from URL at generation time |
-| `path:images/logo.png` | Relative to the asset directory |
-| `spel:condition ? 'a.png' : 'b.png'` | SpEL expression returning a path or data-URI |
+| `image:facsimile` | Looks up `facsimile` in the context — the value can be a data-URI (`data:image/...;base64,...`), an HTTP/HTTPS URL, a relative path in the template package, or raw `byte[]` |
+| `image:logo` | If no context value is found, the key itself (`logo`) is used as a relative path within the template ZIP |
+| `image:${gender == 'F' ? 'female.png' : 'male.png'}` | SpEL expression evaluated first, then the result goes through the same resolution cascade |
+| `image:assets/${department}/stamp.png` | Mixed literal + SpEL — expressions are evaluated and the resulting path is resolved |
 
 ## PDF security
 
