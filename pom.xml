@@ -31,6 +31,12 @@
         </developer>
     </developers>
 
+    <scm>
+        <connection>scm:git:git://github.com/muban-me/muban-docx.git</connection>
+        <developerConnection>scm:git:ssh://github.com:muban-me/muban-docx.git</developerConnection>
+        <url>https://github.com/muban-me/muban-docx</url>
+    </scm>
+
     <properties>
         <java.version>17</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
@@ -149,17 +155,30 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- ═══ GPG signing (required for Maven Central) ═══ -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>3.2.7</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals><goal>sign</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- ═══ Central Portal publishing ═══ -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.7.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                    <autoPublish>true</autoPublish>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
-
-    <distributionManagement>
-        <repository>
-            <id>gitlab-muban-docx</id>
-            <url>https://git.rzakbrodalko.pl/api/v4/projects/63/packages/maven</url>
-        </repository>
-        <snapshotRepository>
-            <id>gitlab-muban-docx</id>
-            <url>https://git.rzakbrodalko.pl/api/v4/projects/63/packages/maven</url>
-        </snapshotRepository>
-    </distributionManagement>
 </project>
