@@ -402,7 +402,7 @@ public final class MubanDocxEngine {
         }
 
         /**
-         * Set the output format: "docx" or "pdf" (defaults to "docx").
+         * Set the output format: "docx", "pdf", or "html" (defaults to "docx").
          */
         public Builder outputFormat(String format) {
             this.outputFormat = format;
