@@ -173,6 +173,18 @@ public class DocxExporter {
                                       String outputDir,
                                       String dirName,
                                       String zipOutputPath) {
+        // Resolve table conditional formatting (borders, shading, text formatting)
+        // before HTML export — same as PDF pipeline — because the XSLT exporter
+        // doesn't resolve Word's tblStylePr/cnfStyle references.
+        DocxTableStyleResolver.resolveTableConditionalFormatting(wordPackage);
+
+        // Set up font mapper so the HTML exporter can resolve font families
+        try {
+            wordPackage.setFontMapper(new IdentityPlusMapper());
+        } catch (Exception e) {
+            log.warn("Could not set up font mapper for HTML export: {}", e.getMessage());
+        }
+
         Path htmlDir = Paths.get(outputDir, dirName);
         try {
             Files.createDirectories(htmlDir);
@@ -183,6 +195,7 @@ public class DocxExporter {
             // Export HTML using docx4j
             HTMLSettings htmlSettings = Docx4J.createHTMLSettings();
             htmlSettings.setOpcPackage(wordPackage);
+            htmlSettings.setFontMapper(wordPackage.getFontMapper());
             htmlSettings.setImageDirPath(imageDirPath);
             htmlSettings.setImageTargetUri("index.html_files/");
             htmlSettings.setImageHandler(
