@@ -163,6 +163,53 @@ class DocxExporterTest {
             String content = Files.readString(Path.of(outputPath));
             assertThat(content).contains("Hello");
         }
+
+        @Test
+        @DisplayName("preserves newlines between paragraphs")
+        void preservesNewlinesBetweenParagraphs() throws Exception {
+            wordPackage.getMainDocumentPart().addParagraphOfText("Second paragraph");
+
+            String outputPath = DocxExporter.exportTxt(wordPackage, tempDir.toString());
+
+            String content = Files.readString(Path.of(outputPath));
+            String[] lines = content.split(System.lineSeparator());
+            assertThat(lines).hasSizeGreaterThanOrEqualTo(2);
+            assertThat(content).contains("Hello");
+            assertThat(content).contains("Second paragraph");
+        }
+
+        @Test
+        @DisplayName("uses custom line separator from TxtExportOptions")
+        void usesCustomLineSeparator() throws Exception {
+            wordPackage.getMainDocumentPart().addParagraphOfText("Second paragraph");
+
+            TxtExportOptions opts = new TxtExportOptions(" | ");
+            String outputPath = DocxExporter.exportTxt(wordPackage, tempDir.toString(), opts);
+
+            String content = Files.readString(Path.of(outputPath));
+            assertThat(content).contains("Hello, World! | Second paragraph");
+        }
+
+        @Test
+        @DisplayName("soft-wraps long paragraphs when pageWidthInChars is set")
+        void softWrapsLongParagraphs() throws Exception {
+            // Create a package with one long paragraph
+            wordPackage = WordprocessingMLPackage.createPackage();
+            wordPackage.getMainDocumentPart().addParagraphOfText(
+                    "The quick brown fox jumps over the lazy dog near the river");
+
+            TxtExportOptions opts = new TxtExportOptions(null, false, 30);
+            String outputPath = DocxExporter.exportTxt(wordPackage, tempDir.toString(), opts);
+
+            String content = Files.readString(Path.of(outputPath));
+            String[] lines = content.split(System.lineSeparator());
+            for (String line : lines) {
+                // Each line must be <= 30 chars (unless a single word exceeds it)
+                assertThat(line.length()).isLessThanOrEqualTo(30);
+            }
+            // All words must still be present
+            assertThat(content).contains("quick").contains("fox").contains("river");
+        }
     }
 
     // ── Unsupported Format ─────────────────────────────────────────────

@@ -15,7 +15,7 @@ via docx4j + Apache FOP.
 | **Table style flattening** | Resolves Word table conditional formatting (banding, header/footer rows, first/last columns) for PDF and HTML export fidelity |
 | **PDF export** | DOCX → PDF via docx4j FO pipeline + Apache FOP, with optional password encryption and permission control |
 | **HTML export** | DOCX → HTML as a self-contained ZIP micro-site (`index.html` + `index.html_files/` assets) via docx4j XSLT pipeline |
-| **TXT export** | Plain-text extraction from the DOCX body via docx4j `TextUtils` |
+| **TXT export** | Plain-text extraction with configurable line separator, trailing-whitespace trimming, and soft word-wrap |
 | **Locale-aware formatting** | Number and date formatting respects `Locale` (`1 234,56` for pl-PL) |
 | **Zero runtime dependencies** | beyond docx4j, Spring Expression Language, and SLF4J |
 
@@ -176,9 +176,12 @@ String zipPath = MubanDocxEngine.builder()
 
 ## TXT export
 
-Plain-text export extracts the document body text using docx4j’s `TextUtils`.
+Plain-text export walks all `w:p` paragraphs in the DOCX body (including tables)
+and writes each paragraph's text separated by a configurable line separator.
+Output is always UTF-8.
 
 ```java
+// Basic — system line separator, no trimming
 String txtPath = MubanDocxEngine.builder()
     .template(new File("template.docx"))
     .data(data)
@@ -186,7 +189,26 @@ String txtPath = MubanDocxEngine.builder()
     .outputFormat("txt")
     .build()
     .generate();
-// txtPath → /tmp/output/<uuid>.txt
+```
+
+### TXT export options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `lineSeparator` | system default | String inserted between paragraphs (`"\n"`, `"\r\n"`, `" \| "`, …) |
+| `trimLineRight` | `false` | Strip trailing whitespace from each paragraph (removes Word's trailing spaces) |
+| `pageWidthInChars` | none (no wrap) | Soft word-wrap width — lines are broken at spaces so no line exceeds this many characters. Words longer than the limit are kept intact. |
+
+```java
+TxtExportOptions opts = new TxtExportOptions("\n", true, 80);
+String txtPath = MubanDocxEngine.builder()
+    .template(new File("template.docx"))
+    .data(data)
+    .outputDir("/tmp/output/")
+    .outputFormat("txt")
+    .txtOptions(opts)
+    .build()
+    .generate();
 ```
 
 ## Architecture

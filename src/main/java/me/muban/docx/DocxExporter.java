@@ -11,9 +11,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -49,6 +51,7 @@ public class DocxExporter {
      * @param outputDir      directory to write the output file to (created if needed)
      * @param pdfOptions     optional PDF security options (only used for PDF output); may be null
      * @param securityCallback optional callback to apply PDF encryption; may be null
+     * @param txtOptions     optional TXT export options (only used for TXT output); may be null
      * @return absolute path to the generated file (ZIP archive for HTML format)
      * @throws MubanDocxException if export fails
      * @throws UnsupportedOutputFormatException if format is not supported
@@ -57,7 +60,8 @@ public class DocxExporter {
                                          String format,
                                          String outputDir,
                                          PdfExportOptions pdfOptions,
-                                         PdfSecurityCallback securityCallback) {
+                                         PdfSecurityCallback securityCallback,
+                                         TxtExportOptions txtOptions) {
         try {
             Files.createDirectories(Paths.get(outputDir));
         } catch (Exception e) {
@@ -88,7 +92,7 @@ public class DocxExporter {
             }
             case "txt" -> {
                 outputPath = outputDir + File.separator + filename + ".txt";
-                exportToTxt(wordPackage, outputPath);
+                exportToTxt(wordPackage, outputPath, txtOptions);
             }
             default -> throw new UnsupportedOutputFormatException(format);
         }
@@ -105,43 +109,107 @@ public class DocxExporter {
     }
 
     /**
+     * Backward-compatible overload without TXT options.
+     */
+    public static String exportDocument(WordprocessingMLPackage wordPackage,
+                                         String format,
+                                         String outputDir,
+                                         PdfExportOptions pdfOptions,
+                                         PdfSecurityCallback securityCallback) {
+        return exportDocument(wordPackage, format, outputDir, pdfOptions, securityCallback, null);
+    }
+
+    /**
      * Export to DOCX only (convenience overload).
      */
     public static String exportDocx(WordprocessingMLPackage wordPackage, String outputDir) {
-        return exportDocument(wordPackage, "docx", outputDir, null, null);
+        return exportDocument(wordPackage, "docx", outputDir, null, null, null);
     }
 
     /**
      * Export to PDF (convenience overload without security).
      */
     public static String exportPdf(WordprocessingMLPackage wordPackage, String outputDir) {
-        return exportDocument(wordPackage, "pdf", outputDir, null, null);
+        return exportDocument(wordPackage, "pdf", outputDir, null, null, null);
     }
 
     /**
      * Export to HTML as ZIP archive (convenience overload).
      */
     public static String exportHtml(WordprocessingMLPackage wordPackage, String outputDir) {
-        return exportDocument(wordPackage, "html", outputDir, null, null);
+        return exportDocument(wordPackage, "html", outputDir, null, null, null);
     }
 
     /**
      * Export to plain text (convenience overload).
      */
     public static String exportTxt(WordprocessingMLPackage wordPackage, String outputDir) {
-        return exportDocument(wordPackage, "txt", outputDir, null, null);
+        return exportDocument(wordPackage, "txt", outputDir, null, null, null);
     }
 
     /**
-     * Internal TXT export via docx4j's {@link TextUtils} JAXB tree walker.
+     * Export to plain text with custom options (convenience overload).
      */
-    private static void exportToTxt(WordprocessingMLPackage wordPackage, String outputPath) {
-        try (Writer writer = new BufferedWriter(new FileWriter(outputPath))) {
-            TextUtils.extractText(wordPackage.getMainDocumentPart().getContents(), writer);
+    public static String exportTxt(WordprocessingMLPackage wordPackage, String outputDir,
+                                    TxtExportOptions txtOptions) {
+        return exportDocument(wordPackage, "txt", outputDir, null, null, txtOptions);
+    }
+
+    /**
+     * Internal TXT export — walks all {@code w:p} paragraphs (including those
+     * nested inside tables) and writes each paragraph's text separated by the
+     * configured line separator (or system default).
+     */
+    private static void exportToTxt(WordprocessingMLPackage wordPackage, String outputPath,
+                                     TxtExportOptions txtOptions) {
+        String separator = txtOptions != null
+                ? txtOptions.resolvedLineSeparator()
+                : System.lineSeparator();
+        boolean trim = txtOptions != null && txtOptions.trimLineRight();
+        Integer wrapWidth = txtOptions != null ? txtOptions.pageWidthInChars() : null;
+        try (Writer writer = new BufferedWriter(
+                new OutputStreamWriter(new FileOutputStream(outputPath), StandardCharsets.UTF_8))) {
+            List<Object> paragraphs = wordPackage.getMainDocumentPart()
+                    .getJAXBNodesViaXPath("//w:p", true);
+            for (int i = 0; i < paragraphs.size(); i++) {
+                if (i > 0) writer.write(separator);
+                String text = TextUtils.getText(paragraphs.get(i));
+                if (text == null) text = "";
+                if (trim) text = text.stripTrailing();
+                if (wrapWidth != null && wrapWidth > 0) {
+                    writer.write(softWrap(text, wrapWidth, separator));
+                } else {
+                    writer.write(text);
+                }
+            }
         } catch (Exception e) {
             throw new MubanDocxException("EXPORT_FAILED",
                     "TXT export failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Soft word-wrap: breaks {@code text} at spaces so no line exceeds
+     * {@code width} characters.  Words longer than {@code width} are
+     * kept intact on their own line (never broken).
+     */
+    static String softWrap(String text, int width, String lineSep) {
+        if (text.length() <= width) return text;
+        StringBuilder sb = new StringBuilder(text.length() + 16);
+        int lineLen = 0;
+        for (String word : text.split(" ", -1)) {
+            if (lineLen == 0) {
+                sb.append(word);
+                lineLen = word.length();
+            } else if (lineLen + 1 + word.length() <= width) {
+                sb.append(' ').append(word);
+                lineLen += 1 + word.length();
+            } else {
+                sb.append(lineSep).append(word);
+                lineLen = word.length();
+            }
+        }
+        return sb.toString();
     }
 
     /**
