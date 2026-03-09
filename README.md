@@ -1,7 +1,7 @@
 # muban-docx
 
 Modern DOCX template engine for Java — SpEL expressions, conditional blocks,
-table row replication, dynamic image replacement, and multi-format export (DOCX, PDF, HTML)
+table row replication, dynamic image replacement, and multi-format export (DOCX, PDF, HTML, TXT)
 via docx4j + Apache FOP.
 
 ## Features
@@ -15,6 +15,7 @@ via docx4j + Apache FOP.
 | **Table style flattening** | Resolves Word table conditional formatting (banding, header/footer rows, first/last columns) for PDF and HTML export fidelity |
 | **PDF export** | DOCX → PDF via docx4j FO pipeline + Apache FOP, with optional password encryption and permission control |
 | **HTML export** | DOCX → HTML as a self-contained ZIP micro-site (`index.html` + `index.html_files/` assets) via docx4j XSLT pipeline |
+| **TXT export** | Plain-text extraction from the DOCX body via docx4j `TextUtils` |
 | **Locale-aware formatting** | Number and date formatting respects `Locale` (`1 234,56` for pl-PL) |
 | **Zero runtime dependencies** | beyond docx4j, Spring Expression Language, and SLF4J |
 
@@ -31,7 +32,7 @@ via docx4j + Apache FOP.
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -173,6 +174,21 @@ String zipPath = MubanDocxEngine.builder()
 //   <uuid>/index.html_files/image1.png
 ```
 
+## TXT export
+
+Plain-text export extracts the document body text using docx4j’s `TextUtils`.
+
+```java
+String txtPath = MubanDocxEngine.builder()
+    .template(new File("template.docx"))
+    .data(data)
+    .outputDir("/tmp/output/")
+    .outputFormat("txt")
+    .build()
+    .generate();
+// txtPath → /tmp/output/<uuid>.txt
+```
+
 ## Architecture
 
 ```text
@@ -183,7 +199,7 @@ MubanDocxEngine (facade)
  ├── DocxImageReplacer          dynamic image replacement
  ├── DocxTableStyleResolver     table style flattening for FO export
  ├── DocxContextBuilder         parameter + data merging
- ├── DocxExporter               DOCX save + PDF FO pipeline + HTML XSLT pipeline
+ ├── DocxExporter               DOCX save + PDF FO pipeline + HTML XSLT pipeline + TXT extraction
  ├── DocxXmlUtils               low-level XML helpers
  └── LocaleUtils                locale parsing + number/date formatting
 ```

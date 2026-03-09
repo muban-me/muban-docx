@@ -1,6 +1,7 @@
 package me.muban.docx;
 
 import org.docx4j.Docx4J;
+import org.docx4j.TextUtils;
 import org.docx4j.convert.out.FOSettings;
 import org.docx4j.convert.out.HTMLSettings;
 import org.docx4j.convert.out.html.HTMLConversionImageHandler;
@@ -18,7 +19,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Exports a filled DOCX document to the requested output format (DOCX, PDF, or HTML).
+ * Exports a filled DOCX document to the requested output format (DOCX, PDF, HTML, or TXT).
  *
  * <p>For PDF output, resolves table conditional formatting before export (since the
  * XSL-FO pipeline doesn't handle table style properties), sets up font mapping,
@@ -44,7 +45,7 @@ public class DocxExporter {
      * Export the filled document to the requested format.
      *
      * @param wordPackage    the filled DOCX document
-     * @param format         output format: {@code "docx"}, {@code "pdf"}, or {@code "html"}
+     * @param format         output format: {@code "docx"}, {@code "pdf"}, {@code "html"}, or {@code "txt"}
      * @param outputDir      directory to write the output file to (created if needed)
      * @param pdfOptions     optional PDF security options (only used for PDF output); may be null
      * @param securityCallback optional callback to apply PDF encryption; may be null
@@ -85,6 +86,10 @@ public class DocxExporter {
                 outputPath = outputDir + File.separator + filename + ".zip";
                 exportToHtml(wordPackage, outputDir, filename, outputPath);
             }
+            case "txt" -> {
+                outputPath = outputDir + File.separator + filename + ".txt";
+                exportToTxt(wordPackage, outputPath);
+            }
             default -> throw new UnsupportedOutputFormatException(format);
         }
 
@@ -118,6 +123,25 @@ public class DocxExporter {
      */
     public static String exportHtml(WordprocessingMLPackage wordPackage, String outputDir) {
         return exportDocument(wordPackage, "html", outputDir, null, null);
+    }
+
+    /**
+     * Export to plain text (convenience overload).
+     */
+    public static String exportTxt(WordprocessingMLPackage wordPackage, String outputDir) {
+        return exportDocument(wordPackage, "txt", outputDir, null, null);
+    }
+
+    /**
+     * Internal TXT export via docx4j's {@link TextUtils} JAXB tree walker.
+     */
+    private static void exportToTxt(WordprocessingMLPackage wordPackage, String outputPath) {
+        try (Writer writer = new BufferedWriter(new FileWriter(outputPath))) {
+            TextUtils.extractText(wordPackage.getMainDocumentPart().getContents(), writer);
+        } catch (Exception e) {
+            throw new MubanDocxException("EXPORT_FAILED",
+                    "TXT export failed: " + e.getMessage(), e);
+        }
     }
 
     /**

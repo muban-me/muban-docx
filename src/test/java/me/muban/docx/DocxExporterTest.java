@@ -15,7 +15,7 @@ import java.util.zip.ZipFile;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * Tests for {@link DocxExporter} — DOCX, PDF, and HTML export.
+ * Tests for {@link DocxExporter} — DOCX, PDF, HTML, and TXT export.
  */
 @DisplayName("DocxExporter")
 class DocxExporterTest {
@@ -141,7 +141,31 @@ class DocxExporterTest {
     // ── Unsupported Format ─────────────────────────────────────────────
 
     @Nested
-    @DisplayName("Unsupported format")
+    @DisplayName("TXT export")
+    class TxtExport {
+
+        @Test
+        @DisplayName("exports a valid .txt file")
+        void exportsTxtFile() {
+            String outputPath = DocxExporter.exportTxt(wordPackage, tempDir.toString());
+
+            File output = new File(outputPath);
+            assertThat(output).exists().isFile();
+            assertThat(output.getName()).endsWith(".txt");
+            assertThat(output.length()).isGreaterThan(0);
+        }
+
+        @Test
+        @DisplayName("exported TXT contains document text")
+        void exportedTxtContainsText() throws Exception {
+            String outputPath = DocxExporter.exportTxt(wordPackage, tempDir.toString());
+
+            String content = Files.readString(Path.of(outputPath));
+            assertThat(content).contains("Hello");
+        }
+    }
+
+    // ── Unsupported Format ─────────────────────────────────────────────
     class UnsupportedFormat {
 
         @Test
