@@ -74,6 +74,7 @@ public final class MubanDocxEngine {
     private final File assetDir;
     private final PdfExportOptions pdfOptions;
     private final PdfSecurityCallback securityCallback;
+    private final TxtExportOptions txtOptions;
 
     private MubanDocxEngine(WordprocessingMLPackage wordPackage,
                              Map<String, Object> rawContext,
@@ -83,7 +84,8 @@ public final class MubanDocxEngine {
                              String outputFormat,
                              File assetDir,
                              PdfExportOptions pdfOptions,
-                             PdfSecurityCallback securityCallback) {
+                             PdfSecurityCallback securityCallback,
+                             TxtExportOptions txtOptions) {
         this.wordPackage = wordPackage;
         this.rawContext = rawContext;
         this.dataArrays = dataArrays;
@@ -93,6 +95,7 @@ public final class MubanDocxEngine {
         this.assetDir = assetDir;
         this.pdfOptions = pdfOptions;
         this.securityCallback = securityCallback;
+        this.txtOptions = txtOptions;
     }
 
     /**
@@ -118,7 +121,7 @@ public final class MubanDocxEngine {
 
         // Step 4: Export
         String result = DocxExporter.exportDocument(
-                wordPackage, outputFormat, outputDir, pdfOptions, securityCallback);
+                wordPackage, outputFormat, outputDir, pdfOptions, securityCallback, txtOptions);
 
         long elapsed = System.currentTimeMillis() - start;
         log.info("Template generation completed in {} ms → {}", elapsed, outputFormat.toUpperCase());
@@ -336,6 +339,7 @@ public final class MubanDocxEngine {
         private File assetDir;
         private PdfExportOptions pdfOptions;
         private PdfSecurityCallback securityCallback;
+        private TxtExportOptions txtOptions;
 
         /**
          * Set the template from a pre-loaded package.
@@ -402,7 +406,7 @@ public final class MubanDocxEngine {
         }
 
         /**
-         * Set the output format: "docx" or "pdf" (defaults to "docx").
+         * Set the output format: "docx", "pdf", "html", or "txt" (defaults to "docx").
          */
         public Builder outputFormat(String format) {
             this.outputFormat = format;
@@ -434,6 +438,14 @@ public final class MubanDocxEngine {
         }
 
         /**
+         * Set TXT export options (line separator).
+         */
+        public Builder txtOptions(TxtExportOptions opts) {
+            this.txtOptions = opts;
+            return this;
+        }
+
+        /**
          * Build the engine instance.
          *
          * @throws IllegalStateException if no template is set
@@ -457,7 +469,7 @@ public final class MubanDocxEngine {
             return new MubanDocxEngine(
                     wordPackage, ctx, arrays, locale,
                     outputDir, outputFormat, assetDir,
-                    pdfOptions, securityCallback);
+                    pdfOptions, securityCallback, txtOptions);
         }
     }
 }

@@ -1,7 +1,8 @@
 # muban-docx
 
 Modern DOCX template engine for Java — SpEL expressions, conditional blocks,
-table row replication, dynamic image replacement, and PDF export via docx4j + Apache FOP.
+table row replication, dynamic image replacement, and multi-format export (DOCX, PDF, HTML, TXT)
+via docx4j + Apache FOP.
 
 ## Features
 
@@ -11,8 +12,10 @@ table row replication, dynamic image replacement, and PDF export via docx4j + Ap
 | **Conditional blocks** | `#{if expr}` / `#{else}` / `#{fi}` — paragraph-level conditionals with boolean coercion |
 | **Table row replication** | Automatically clone template rows for array data (`${items.name}`) |
 | **Dynamic images** | Replace placeholder images via data-URI, URL, relative path, or SpEL expression in alt-text |
-| **Table style flattening** | Resolves Word table conditional formatting (banding, header/footer rows, first/last columns) for FO export fidelity |
+| **Table style flattening** | Resolves Word table conditional formatting (banding, header/footer rows, first/last columns) for PDF and HTML export fidelity |
 | **PDF export** | DOCX → PDF via docx4j FO pipeline + Apache FOP, with optional password encryption and permission control |
+| **HTML export** | DOCX → HTML as a self-contained ZIP micro-site (`index.html` + `index.html_files/` assets) via docx4j XSLT pipeline |
+| **TXT export** | Plain-text extraction with configurable line separator, trailing-whitespace trimming, and soft word-wrap |
 | **Locale-aware formatting** | Number and date formatting respects `Locale` (`1 234,56` for pl-PL) |
 | **Zero runtime dependencies** | beyond docx4j, Spring Expression Language, and SLF4J |
 
@@ -29,7 +32,7 @@ table row replication, dynamic image replacement, and PDF export via docx4j + Ap
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -150,6 +153,64 @@ MubanDocxEngine.builder()
     .generate();
 ```
 
+## HTML export
+
+HTML export produces a ZIP archive containing `index.html` and an
+`index.html_files/` directory with embedded images. The structure is
+compatible with the S2S convention used by JasperReports HTML output.
+
+```java
+String zipPath = MubanDocxEngine.builder()
+    .template(new File("template.docx"))
+    .data(data)
+    .locale(Locale.forLanguageTag("pl-PL"))
+    .outputDir("/tmp/output/")
+    .outputFormat("html")
+    .build()
+    .generate();
+// zipPath → /tmp/output/<uuid>.zip
+// Contents:
+//   <uuid>/index.html
+//   <uuid>/index.html_files/image1.png
+```
+
+## TXT export
+
+Plain-text export walks all `w:p` paragraphs in the DOCX body (including tables)
+and writes each paragraph's text separated by a configurable line separator.
+Output is always UTF-8.
+
+```java
+// Basic — system line separator, no trimming
+String txtPath = MubanDocxEngine.builder()
+    .template(new File("template.docx"))
+    .data(data)
+    .outputDir("/tmp/output/")
+    .outputFormat("txt")
+    .build()
+    .generate();
+```
+
+### TXT export options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `lineSeparator` | system default | String inserted between paragraphs (`"\n"`, `"\r\n"`, `" \| "`, …) |
+| `trimLineRight` | `false` | Strip trailing whitespace from each paragraph (removes Word's trailing spaces) |
+| `pageWidthInChars` | none (no wrap) | Soft word-wrap width — lines are broken at spaces so no line exceeds this many characters. Words longer than the limit are kept intact. |
+
+```java
+TxtExportOptions opts = new TxtExportOptions("\n", true, 80);
+String txtPath = MubanDocxEngine.builder()
+    .template(new File("template.docx"))
+    .data(data)
+    .outputDir("/tmp/output/")
+    .outputFormat("txt")
+    .txtOptions(opts)
+    .build()
+    .generate();
+```
+
 ## Architecture
 
 ```text
@@ -160,7 +221,7 @@ MubanDocxEngine (facade)
  ├── DocxImageReplacer          dynamic image replacement
  ├── DocxTableStyleResolver     table style flattening for FO export
  ├── DocxContextBuilder         parameter + data merging
- ├── DocxExporter               DOCX save + PDF FO pipeline
+ ├── DocxExporter               DOCX save + PDF FO pipeline + HTML XSLT pipeline + TXT extraction
  ├── DocxXmlUtils               low-level XML helpers
  └── LocaleUtils                locale parsing + number/date formatting
 ```
