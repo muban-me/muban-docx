@@ -16,6 +16,8 @@ via docx4j + Apache FOP.
 | **PDF export** | DOCX → PDF via docx4j FO pipeline + Apache FOP, with optional password encryption and permission control |
 | **HTML export** | DOCX → HTML as a self-contained ZIP micro-site (`index.html` + `index.html_files/` assets) via docx4j XSLT pipeline |
 | **TXT export** | Plain-text extraction with configurable line separator, trailing-whitespace trimming, and soft word-wrap |
+| **Format map** | Per-placeholder format patterns (`#,##0.00`, `dd.MM.yyyy`) applied after SpEL evaluation via `.formatMap()` |
+| **Soft line break handling** | Runs containing `w:br` (soft line breaks) are split before processing, preventing placeholder corruption |
 | **Locale-aware formatting** | Number and date formatting respects `Locale` (`1 234,56` for pl-PL) |
 | **Zero runtime dependencies** | beyond docx4j, Spring Expression Language, and SLF4J |
 
@@ -32,7 +34,7 @@ via docx4j + Apache FOP.
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
 </dependency>
 ```
 
@@ -60,6 +62,32 @@ String outputPath = MubanDocxEngine.builder()
     .generate();
 ```
 
+### Format map (post-evaluation formatting)
+
+Apply format patterns to specific placeholders after SpEL evaluation:
+
+```java
+Map<String, String> formats = Map.of(
+    "amount", "#,##0.00",
+    "invoiceDate", "dd.MM.yyyy"
+);
+
+String outputPath = MubanDocxEngine.builder()
+    .template(new File("invoice.docx"))
+    .data(data)
+    .formatMap(formats)
+    .locale(Locale.forLanguageTag("pl-PL"))
+    .outputDir("/tmp/output/")
+    .outputFormat("pdf")
+    .build()
+    .generate();
+// amount renders as "1 500,50", invoiceDate as "15.01.2025"
+```
+
+Format patterns follow `DecimalFormat` syntax for numbers and `DateTimeFormatter`
+syntax for temporal values. They are applied only to simple key placeholders
+(e.g. `${amount}`), not to SpEL expressions.
+
 ### In-memory processing (no export)
 
 ```java
@@ -72,6 +100,11 @@ WordprocessingMLPackage result = MubanDocxEngine.builder()
 // Save or further manipulate the package yourself
 result.save(new File("result.docx"));
 ```
+
+> **Note:** `process()` does **not** call `VariablePrepare.prepare()` on the
+> package. For DOCX files loaded from disk (which may contain split runs, rsid
+> attributes, and bookmarks), call `VariablePrepare.prepare(wordPackage)` before
+> invoking `process()`. The `generate()` method calls `prepare()` automatically.
 
 ## Template syntax
 

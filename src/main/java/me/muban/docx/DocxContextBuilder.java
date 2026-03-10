@@ -105,9 +105,13 @@ public class DocxContextBuilder {
         }
 
         for (Map.Entry<String, Object> entry : data.entrySet()) {
-            if (entry.getValue() instanceof List<?> list && !list.isEmpty()) {
-                // Verify the list contains Maps (rows of key-value data)
-                if (list.get(0) instanceof Map) {
+            if (entry.getValue() instanceof List<?> list) {
+                if (list.isEmpty()) {
+                    // Preserve empty arrays so table processor can detect and remove template rows
+                    arrays.put(entry.getKey(), Collections.emptyList());
+                    log.debug("Found empty data array '{}' for table replication", entry.getKey());
+                } else if (list.get(0) instanceof Map) {
+                    // Verify the list contains Maps (rows of key-value data)
                     @SuppressWarnings("unchecked")
                     List<Map<String, Object>> typedList = (List<Map<String, Object>>) list;
                     arrays.put(entry.getKey(), typedList);
