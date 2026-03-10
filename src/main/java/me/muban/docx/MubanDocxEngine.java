@@ -8,6 +8,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.InputStream;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAccessor;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -65,9 +70,13 @@ public final class MubanDocxEngine {
     /** Pattern to match ${placeholder} expressions */
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
 
+    /** Pattern for a simple key: Java identifier, optionally with dot-separated parts (e.g. address.city). */
+    private static final Pattern SIMPLE_KEY_PATTERN = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
+
     private final WordprocessingMLPackage wordPackage;
     private final Map<String, Object> rawContext;
     private final Map<String, List<Map<String, Object>>> dataArrays;
+    private final Map<String, String> formatMap;
     private final Locale locale;
     private final String outputDir;
     private final String outputFormat;
@@ -79,6 +88,7 @@ public final class MubanDocxEngine {
     private MubanDocxEngine(WordprocessingMLPackage wordPackage,
                              Map<String, Object> rawContext,
                              Map<String, List<Map<String, Object>>> dataArrays,
+                             Map<String, String> formatMap,
                              Locale locale,
                              String outputDir,
                              String outputFormat,
@@ -89,6 +99,7 @@ public final class MubanDocxEngine {
         this.wordPackage = wordPackage;
         this.rawContext = rawContext;
         this.dataArrays = dataArrays;
+        this.formatMap = formatMap;
         this.locale = locale;
         this.outputDir = outputDir;
         this.outputFormat = outputFormat;
@@ -106,6 +117,14 @@ public final class MubanDocxEngine {
      */
     public String generate() {
         long start = System.currentTimeMillis();
+
+        // Step 0: Prepare document — merge split runs, clean up rsids/bookmarks
+        try {
+            VariablePrepare.prepare(wordPackage);
+        } catch (Exception e) {
+            throw new MubanDocxException("PREPARE_FAILED",
+                    "Failed to prepare document for variable replacement: " + e.getMessage(), e);
+        }
 
         // Step 1: Conditional blocks (body + headers/footers)
         processConditionalBlocks();
@@ -132,9 +151,15 @@ public final class MubanDocxEngine {
     /**
      * Process the template in-memory without exporting.
      *
-     * <p>Runs steps 1–3 (conditionals, placeholders, images) and returns
-     * the modified {@link WordprocessingMLPackage}. The caller is responsible
+     * <p>Runs the content processing pipeline (conditionals, placeholders,
+     * table row replication, images) and returns the modified
+     * {@link WordprocessingMLPackage}. The caller is responsible
      * for saving or further processing the package.
+     *
+     * <p><b>Note:</b> Unlike {@link #generate()}, this method does <em>not</em>
+     * call {@link VariablePrepare#prepare(WordprocessingMLPackage)}. For DOCX
+     * files loaded from disk (which may contain split runs, rsids and bookmarks),
+     * call {@code VariablePrepare.prepare(wordPackage)} before invoking this method.
      *
      * @return the processed DOCX package
      */
@@ -252,6 +277,8 @@ public final class MubanDocxEngine {
     private void replacePlaceholders(P paragraph) {
         // Merge split runs so each ${...} is within a single run
         VariablePrepare.joinupRuns(paragraph);
+        // Normalize runs containing w:br (soft line breaks) into separate runs
+        DocxXmlUtils.splitRunsAtBreaks(paragraph);
 
         for (Object obj : paragraph.getContent()) {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
@@ -265,6 +292,18 @@ public final class MubanDocxEngine {
             while (matcher.find()) {
                 String body = matcher.group(1).trim();
                 String replacement = DocxExpressionEvaluator.evaluate(body, rawContext, locale);
+
+                // Apply format pattern for simple key placeholders only
+                if (!formatMap.isEmpty() && isSimpleKey(body) && formatMap.containsKey(body)) {
+                    Object rawValue = rawContext.get(body);
+                    if (rawValue != null) {
+                        String formatted = applyFormat(rawValue, formatMap.get(body), locale);
+                        if (formatted != null) {
+                            replacement = formatted;
+                        }
+                    }
+                }
+
                 matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
             }
             matcher.appendTail(result);
@@ -316,6 +355,52 @@ public final class MubanDocxEngine {
         }
     }
 
+    // ==================== FORMAT UTILITIES ====================
+
+    /**
+     * Check if a placeholder body is a simple key lookup (not a SpEL expression).
+     * Simple keys are identifiers like {@code amount}, {@code address.city}, {@code item_count}.
+     * Anything with operators, method calls, ternary, or brackets is NOT a simple key.
+     */
+    public static boolean isSimpleKey(String body) {
+        return SIMPLE_KEY_PATTERN.matcher(body).matches();
+    }
+
+    /**
+     * Apply a format pattern to a raw value.
+     *
+     * <p>For {@link Number} values, uses {@link DecimalFormat} with the given pattern.
+     * For {@link TemporalAccessor} values (LocalDate, LocalDateTime), uses {@link DateTimeFormatter}.
+     * For {@link java.util.Date} values, uses {@link java.text.SimpleDateFormat}.
+     *
+     * @param rawValue the typed value from the context
+     * @param pattern  the format pattern string
+     * @param locale   the document locale (may be null)
+     * @return formatted string, or {@code null} if the value type is not formattable or pattern is invalid
+     */
+    public static String applyFormat(Object rawValue, String pattern, Locale locale) {
+        Locale effectiveLocale = locale != null ? locale : Locale.getDefault();
+        try {
+            if (rawValue instanceof Number number) {
+                DecimalFormat df = new DecimalFormat(pattern, DecimalFormatSymbols.getInstance(effectiveLocale));
+                return df.format(number);
+            }
+            if (rawValue instanceof TemporalAccessor temporal) {
+                DateTimeFormatter dtf = DateTimeFormatter.ofPattern(pattern, effectiveLocale);
+                return dtf.format(temporal);
+            }
+            if (rawValue instanceof java.util.Date date) {
+                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(pattern, effectiveLocale);
+                return sdf.format(date);
+            }
+            return null; // not a formattable type — keep evaluator's output
+        } catch (IllegalArgumentException e) {
+            log.warn("Format pattern '{}' failed for value '{}' ({}): {}",
+                    pattern, rawValue, rawValue.getClass().getSimpleName(), e.getMessage());
+            return null; // graceful fallback
+        }
+    }
+
     // ==================== BUILDER ====================
 
     /**
@@ -340,6 +425,7 @@ public final class MubanDocxEngine {
         private PdfExportOptions pdfOptions;
         private PdfSecurityCallback securityCallback;
         private TxtExportOptions txtOptions;
+        private Map<String, String> formatMap;
 
         /**
          * Set the template from a pre-loaded package.
@@ -446,6 +532,15 @@ public final class MubanDocxEngine {
         }
 
         /**
+         * Set the format map for post-evaluation formatting.
+         * Maps placeholder names to format patterns (e.g. {@code #,##0.00}, {@code dd.MM.yyyy}).
+         */
+        public Builder formatMap(Map<String, String> fm) {
+            this.formatMap = fm;
+            return this;
+        }
+
+        /**
          * Build the engine instance.
          *
          * @throws IllegalStateException if no template is set
@@ -467,8 +562,9 @@ public final class MubanDocxEngine {
                     data != null ? data : ctx);
 
             return new MubanDocxEngine(
-                    wordPackage, ctx, arrays, locale,
-                    outputDir, outputFormat, assetDir,
+                    wordPackage, ctx, arrays,
+                    formatMap != null ? formatMap : Collections.emptyMap(),
+                    locale, outputDir, outputFormat, assetDir,
                     pdfOptions, securityCallback, txtOptions);
         }
     }
