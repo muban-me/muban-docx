@@ -241,15 +241,15 @@ public class DocxExporter {
                     "PDF export failed: " + e.getMessage(), e);
         }
 
-        // Post-process: apply PDF security settings if requested
-        if (pdfOptions != null && pdfOptions.hasSecuritySettings() && securityCallback != null) {
+        // Post-process: invoke callback for PDF post-processing (duplex padding, security, etc.)
+        if (securityCallback != null) {
             try {
-                log.info("Applying PDF security settings");
+                log.info("Applying PDF post-processing");
                 securityCallback.applySecurity(outputPath, pdfOptions);
-                log.info("PDF security settings applied successfully");
+                log.info("PDF post-processing applied successfully");
             } catch (Exception e) {
-                throw new MubanDocxException("PDF_SECURITY_FAILED",
-                        "Failed to apply PDF security: " + e.getMessage(), e);
+                throw new MubanDocxException("PDF_POST_PROCESSING_FAILED",
+                        "Failed to apply PDF post-processing: " + e.getMessage(), e);
             }
         }
     }
