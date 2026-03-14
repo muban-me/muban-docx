@@ -6,6 +6,8 @@ import org.docx4j.convert.out.FOSettings;
 import org.docx4j.convert.out.HTMLSettings;
 import org.docx4j.convert.out.html.HTMLConversionImageHandler;
 import org.docx4j.fonts.IdentityPlusMapper;
+import org.docx4j.fonts.PhysicalFont;
+import org.docx4j.fonts.PhysicalFonts;
 import org.docx4j.openpackaging.packages.WordprocessingMLPackage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -224,7 +226,21 @@ public class DocxExporter {
 
         // Font mapper MUST be set before FOSettings.setOpcPackage()
         try {
-            wordPackage.setFontMapper(new IdentityPlusMapper());
+            IdentityPlusMapper mapper = new IdentityPlusMapper();
+            wordPackage.setFontMapper(mapper);
+
+            // Map any unmapped document fonts to DejaVu Sans to avoid
+            // FOP falling back to non-embedded base-14 Type 1 fonts
+            PhysicalFont fallback = PhysicalFonts.get("DejaVu Sans");
+            if (fallback != null) {
+                for (String fontName : wordPackage.getMainDocumentPart().fontsInUse()) {
+                    if (mapper.get(fontName) == null) {
+                        mapper.put(fontName, fallback);
+                        log.debug("Font '{}' not available — mapped to fallback '{}'",
+                                fontName, fallback.getName());
+                    }
+                }
+            }
         } catch (Exception e) {
             log.warn("Could not set up font mapper for PDF export, " +
                      "bold/italic may not render correctly: {}", e.getMessage());
@@ -363,4 +379,5 @@ public class DocxExporter {
             log.warn("Could not clean up temporary HTML directory {}: {}", dir, e.getMessage());
         }
     }
+
 }
