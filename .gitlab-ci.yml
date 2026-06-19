@@ -17,7 +17,7 @@ test:
   stage: test
   tags:
     - docker
-  image: eclipse-temurin:17-jdk
+  image: eclipse-temurin:21-jdk
   before_script:
     - apt-get update -q && apt-get install -y maven
   script:
@@ -39,7 +39,7 @@ publish:
   stage: publish
   tags:
     - docker
-  image: eclipse-temurin:17-jdk
+  image: eclipse-temurin:21-jdk
   needs:
     - job: test
       artifacts: false
