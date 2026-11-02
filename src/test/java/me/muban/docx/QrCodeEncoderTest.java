@@ -126,4 +126,76 @@ class QrCodeEncoderTest {
             assertThat(QrCodeEncoder.toPng("   ")).isNull();
         }
     }
+
+    @Nested
+    @DisplayName("Rendering options")
+    class Options {
+
+        private static final String QUERY = "ec=H&margin=4&scale=6&bg=transparent";
+
+        @Test
+        @DisplayName("should default to M, margin 2, white background")
+        void shouldProvideDefaults() {
+            var options = QrCodeEncoder.QrOptions.defaults();
+
+            assertThat(options.errorCorrection()).isEqualTo(QrCodeEncoder.ErrorCorrection.M);
+            assertThat(options.marginModules()).isEqualTo(2);
+            assertThat(options.scale()).isEqualTo(QrCodeEncoder.QrOptions.AUTO_SCALE);
+            assertThat(options.minPixels()).isEqualTo(300);
+            assertThat(options.background()).isEqualTo("white");
+        }
+
+        @Test
+        @DisplayName("should parse a full query string")
+        void shouldParseQuery() {
+            var options = QrCodeEncoder.QrOptions.parse(QUERY);
+
+            assertThat(options.errorCorrection()).isEqualTo(QrCodeEncoder.ErrorCorrection.H);
+            assertThat(options.marginModules()).isEqualTo(4);
+            assertThat(options.scale()).isEqualTo(6);
+            assertThat(options.background()).isEqualTo("transparent");
+        }
+
+        @Test
+        @DisplayName("should ignore unknown and malformed options")
+        void shouldIgnoreInvalidOptions() {
+            var options = QrCodeEncoder.QrOptions.parse("ec=X&margin=99&scale=abc&bg=purple&foo=bar&baz");
+
+            assertThat(options).isEqualTo(QrCodeEncoder.QrOptions.defaults());
+        }
+
+        @Test
+        @DisplayName("should accept a hex background colour")
+        void shouldAcceptHexBackground() {
+            assertThat(QrCodeEncoder.QrOptions.parse("bg=#FFF3E0").background()).isEqualTo("#FFF3E0");
+            assertThat(QrCodeEncoder.QrOptions.parse("bg=fff3e0").background()).isEqualTo("#fff3e0");
+        }
+
+        @Test
+        @DisplayName("should honour an explicit module scale")
+        void shouldHonourExplicitScale() throws Exception {
+            var options = QrCodeEncoder.QrOptions.defaults().withScale(5);
+
+            BufferedImage image = readPng(QrCodeEncoder.toPng(PAYMENT_URL, options));
+
+            // 41 modules for this payload, so 41 * 5 = 205 px
+            assertThat(image.getWidth()).isEqualTo(image.getHeight());
+            assertThat(image.getWidth() % 5).isZero();
+            assertThat(decode(QrCodeEncoder.toPng(PAYMENT_URL, options))).isEqualTo(PAYMENT_URL);
+        }
+
+        @Test
+        @DisplayName("should render a transparent background that still decodes")
+        void shouldRenderTransparentBackground() throws Exception {
+            var options = QrCodeEncoder.QrOptions.defaults().withBackground("transparent");
+
+            byte[] png = QrCodeEncoder.toPng(PAYMENT_URL, options);
+            BufferedImage image = readPng(png);
+
+            assertThat(image.getColorModel().hasAlpha()).isTrue();
+            assertThat(image.getRGB(0, 0) >>> 24).as("corner alpha should be 0").isZero();
+            assertThat(image.getRGB(0, 0) & 0xFFFFFF).as("RGB under alpha should be white").isEqualTo(0xFFFFFF);
+            assertThat(decode(png)).isEqualTo(PAYMENT_URL);
+        }
+    }
 }

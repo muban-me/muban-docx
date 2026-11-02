@@ -304,6 +304,53 @@ class DocxImageReplacerTest {
             assertThat(replaced).isZero();
             assertThat(getImageBytes(pkg)).isEqualTo(TINY_PNG);
         }
+
+        @Test
+        @DisplayName("should apply rendering options from the alt text query")
+        void shouldApplyOptionsFromAltText() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:qr_code?ec=H&margin=4&scale=5");
+
+            Map<String, Object> rawContext = Map.of("qr_code", "qr:" + PAYMENT_URL);
+
+            int replaced = DocxImageReplacer.replaceImages(pkg, rawContext, cacheDir);
+
+            assertThat(replaced).isEqualTo(1);
+
+            byte[] imageBytes = getImageBytes(pkg);
+            assertThat(decodeQr(imageBytes)).isEqualTo(PAYMENT_URL);
+            var image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(imageBytes));
+            assertThat(image.getWidth() % 5).as("explicit scale=5 should drive the pixel size").isZero();
+        }
+
+        @Test
+        @DisplayName("should apply options to a SpEL expression alt text")
+        void shouldApplyOptionsWithSpel() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:${qr_target}?ec=Q");
+
+            Map<String, Object> rawContext = Map.of("qr_target", "qr:" + PAYMENT_URL);
+
+            int replaced = DocxImageReplacer.replaceImages(pkg, rawContext, cacheDir);
+
+            assertThat(replaced).isEqualTo(1);
+            assertThat(decodeQr(getImageBytes(pkg))).isEqualTo(PAYMENT_URL);
+        }
+
+        @Test
+        @DisplayName("should report the bare key when options are present")
+        void shouldReportBareKeyForOptions() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:qr_code?ec=H");
+
+            assertThat(DocxImageReplacer.extractImageKeys(pkg)).containsExactly("qr_code");
+        }
+
+        @Test
+        @DisplayName("should treat a malformed query as part of the key")
+        void shouldKeepMalformedQueryInKey() {
+            assertThat(DocxImageReplacer.splitKeyAndOptions("code?ec"))
+                    .containsExactly("code?ec", null);
+            assertThat(DocxImageReplacer.splitKeyAndOptions("code?ec=H"))
+                    .containsExactly("code", "ec=H");
+        }
     }
 
     // ==================== RELATIVE PATH IMAGE REPLACEMENT ====================

@@ -178,13 +178,38 @@ Map<String, Object> data = Map.of(
 Alt-text: image:qr_code
 ```
 
-Codes use error correction level `M` (≈15% recovery), a 2-module quiet zone and UTF-8 encoding.
-The symbol is rendered oversampled (300 px minimum) and scaled down by the picture frame in the
-template, so the placeholder image **must be square** — otherwise the code will be distorted.
-Because the image part keeps its original content type, the placeholder must be a **PNG**.
+Codes use UTF-8 and are rendered oversampled (300 px minimum) and scaled down by the picture
+frame in the template, so the placeholder image **must be square** — otherwise the code will be
+distorted. Because the image part keeps its original content type, the placeholder must be a
+**PNG**.
+
+Rendering can be tuned per image with a query string appended to the alt-text key:
+
+```text
+Alt-text: image:qr_code?ec=H&margin=4&scale=8&bg=transparent
+```
+
+| Option | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `ec` | `L`, `M`, `Q`, `H` | `M` | Error correction level (~7 / 15 / 25 / 30 % recovery) |
+| `margin` | `0`–`16` | `2` | Quiet zone, in modules |
+| `scale` | `1`–`40` | auto | Pixels per module (disables auto-scaling) |
+| `minPx` | `60`–`4000` | `300` | Minimum edge length when scaling automatically |
+| `bg` | `white`, `transparent`, `#RRGGBB` | `white` | Background colour |
+
+Unknown options and out-of-range values are ignored with a warning, and a query that is not a
+well-formed `name=value` list is treated as part of the key — a typo in a template cannot break
+document generation.
+
+**Background.** Opaque white is the default on purpose: a QR code needs a light quiet zone
+around the symbol, and a transparent background only stays light if nothing coloured sits behind
+the picture. Use `bg=transparent` only when the template guarantees a white backdrop — note that
+even then the transparent pixels keep white RGB under the alpha channel, so pipelines that drop
+the alpha channel still see a light background rather than black.
 
 Blank payloads, and any encoding failure, leave the original template image untouched.
-The encoder is available directly as `QrCodeEncoder.toPng("text")`.
+The encoder is available directly as `QrCodeEncoder.toPng("text")` or
+`QrCodeEncoder.toPng("text", QrCodeEncoder.QrOptions.parse("ec=H&bg=transparent"))`.
 
 ## PDF security
 

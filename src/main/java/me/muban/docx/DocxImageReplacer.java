@@ -332,7 +332,7 @@ public final class DocxImageReplacer {
 
                 String imageKey = altText.substring(IMAGE_PREFIX.length()).trim();
                 if (!imageKey.isEmpty()) {
-                    keyConsumer.accept(imageKey);
+                    keyConsumer.accept(splitKeyAndOptions(imageKey)[0]);
                 }
             }
         }
@@ -399,8 +399,13 @@ public final class DocxImageReplacer {
                 String altText = docPr.getDescr();
                 if (altText == null || !altText.startsWith(IMAGE_PREFIX)) continue;
 
-                String imageKey = altText.substring(IMAGE_PREFIX.length()).trim();
-                if (imageKey.isEmpty()) continue;
+                String rawKey = altText.substring(IMAGE_PREFIX.length()).trim();
+                if (rawKey.isEmpty()) continue;
+
+                String[] keyAndOptions = splitKeyAndOptions(rawKey);
+                String imageKey = keyAndOptions[0];
+                QrCodeEncoder.QrOptions qrOptions =
+                        keyAndOptions[1] == null ? null : QrCodeEncoder.QrOptions.parse(keyAndOptions[1]);
 
                 byte[] imageBytes;
                 if (imageKey.contains("${")) {
@@ -409,9 +414,9 @@ public final class DocxImageReplacer {
                         log.debug("SpEL evaluation produced no usable result for '{}', keeping original", imageKey);
                         continue;
                     }
-                    imageBytes = resolveImageValue(evaluated, cacheDir);
+                    imageBytes = resolveImageValue(evaluated, cacheDir, qrOptions);
                 } else {
-                    imageBytes = resolveImageBytes(imageKey, rawContext, cacheDir);
+                    imageBytes = resolveImageBytes(imageKey, rawContext, cacheDir, qrOptions);
                 }
                 if (imageBytes == null) {
                     log.debug("No image data found for key '{}', keeping original", imageKey);
@@ -452,12 +457,23 @@ public final class DocxImageReplacer {
      * Resolve a direct value string into image bytes (no context lookup).
      */
     static byte[] resolveImageValue(String value, File cacheDir) {
+        return resolveImageValue(value, cacheDir, null);
+    }
+
+    /**
+     * Resolve a direct value string into image bytes (no context lookup).
+     *
+     * @param value     the resolved value (data URI, {@code qr:} payload, URL or path)
+     * @param cacheDir  template cache directory for relative paths
+     * @param qrOptions QR rendering options, or {@code null} for defaults
+     */
+    static byte[] resolveImageValue(String value, File cacheDir, QrCodeEncoder.QrOptions qrOptions) {
         if (value.startsWith(DATA_URI_PREFIX)) {
             return decodeDataUri(value);
         }
 
         if (QrCodeEncoder.isQrValue(value)) {
-            return QrCodeEncoder.toPng(QrCodeEncoder.payloadOf(value));
+            return QrCodeEncoder.toPng(QrCodeEncoder.payloadOf(value), qrOptions);
         }
 
         if (value.startsWith(HTTP_PREFIX) || value.startsWith(HTTPS_PREFIX)) {
@@ -471,8 +487,27 @@ public final class DocxImageReplacer {
 
     /**
      * Resolve image bytes from context values or template path fallback.
+     *
+     * @param imageKey   the lookup key (without alt text options)
+     * @param rawContext the evaluation context
+     * @param cacheDir   template cache directory for relative paths
+     * @return image bytes, or {@code null} when nothing was found
      */
     static byte[] resolveImageBytes(String imageKey, Map<String, Object> rawContext, File cacheDir) {
+        return resolveImageBytes(imageKey, rawContext, cacheDir, null);
+    }
+
+    /**
+     * Resolve image bytes from context values or template path fallback.
+     *
+     * @param imageKey   the lookup key (without alt text options)
+     * @param rawContext the evaluation context
+     * @param cacheDir   template cache directory for relative paths
+     * @param qrOptions  QR rendering options, or {@code null} for defaults
+     * @return image bytes, or {@code null} when nothing was found
+     */
+    static byte[] resolveImageBytes(String imageKey, Map<String, Object> rawContext, File cacheDir,
+                                    QrCodeEncoder.QrOptions qrOptions) {
         // 1. Direct context lookup
         Object value = rawContext.get(imageKey);
 
@@ -490,7 +525,7 @@ public final class DocxImageReplacer {
                 return decodeDataUri(stringValue);
             }
             if (QrCodeEncoder.isQrValue(stringValue)) {
-                return QrCodeEncoder.toPng(QrCodeEncoder.payloadOf(stringValue));
+                return QrCodeEncoder.toPng(QrCodeEncoder.payloadOf(stringValue), qrOptions);
             }
             if (stringValue.startsWith(HTTP_PREFIX) || stringValue.startsWith(HTTPS_PREFIX)) {
                 return loadFromUrl(stringValue);
@@ -504,6 +539,46 @@ public final class DocxImageReplacer {
 
         // 4. Key itself as relative path in template package
         return loadFromTemplatePath(imageKey, cacheDir);
+    }
+
+    /**
+     * Split an image alt text key into the lookup key and optional rendering options.
+     *
+     * <p>Options are appended as a query string, e.g. {@code image:qr_code?ec=H&amp;margin=4}.
+     * A {@code ?} that belongs to a SpEL expression (before the closing {@code }}) is ignored,
+     * and a query that is not a well-formed {@code name=value} list is treated as part of the
+     * key — so existing templates keep working unchanged.</p>
+     *
+     * @param imageKey the key part of the alt text, without the {@code image:} prefix
+     * @return two-element array: lookup key and options query (second element {@code null} when absent)
+     */
+    static String[] splitKeyAndOptions(String imageKey) {
+        int lastBrace = imageKey.lastIndexOf('}');
+        int index = imageKey.indexOf('?', lastBrace + 1);
+        if (index <= 0 || index == imageKey.length() - 1) {
+            return new String[]{imageKey, null};
+        }
+
+        String key = imageKey.substring(0, index).trim();
+        String query = imageKey.substring(index + 1).trim();
+        if (key.isEmpty() || !isWellFormedOptions(query)) {
+            return new String[]{imageKey, null};
+        }
+        return new String[]{key, query};
+    }
+
+    private static boolean isWellFormedOptions(String query) {
+        for (String token : query.split("&")) {
+            String trimmed = token.trim();
+            int eq = trimmed.indexOf('=');
+            if (eq <= 0 || eq == trimmed.length() - 1) {
+                return false;
+            }
+            if (!trimmed.substring(0, eq).matches("[A-Za-z]+")) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static byte[] decodeDataUri(String dataUri) {
