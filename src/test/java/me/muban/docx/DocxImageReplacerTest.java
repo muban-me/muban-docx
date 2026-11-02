@@ -242,6 +242,70 @@ class DocxImageReplacerTest {
         }
     }
 
+    // ==================== QR CODE IMAGE REPLACEMENT ====================
+
+    @Nested
+    @DisplayName("QR code image replacement")
+    class QrCodeTests {
+
+        private static final String PAYMENT_URL =
+                "https://www.warta.pl/obsluga/platnosci?nr=920046666381&kwota=2381.99";
+
+        private String decodeQr(byte[] png) throws Exception {
+            var image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+            int width = image.getWidth();
+            int height = image.getHeight();
+            int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
+
+            var bitmap = new com.google.zxing.BinaryBitmap(
+                    new com.google.zxing.common.HybridBinarizer(
+                            new com.google.zxing.RGBLuminanceSource(width, height, pixels)));
+            return new com.google.zxing.MultiFormatReader().decode(bitmap).getText();
+        }
+
+        @Test
+        @DisplayName("should render QR code from qr: context value")
+        void shouldRenderQrFromContextValue() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:qr_code");
+
+            Map<String, Object> rawContext = Map.of("qr_code", "qr:" + PAYMENT_URL);
+
+            int replaced = DocxImageReplacer.replaceImages(pkg, rawContext, cacheDir);
+
+            assertThat(replaced).isEqualTo(1);
+
+            byte[] imageBytes = getImageBytes(pkg);
+            assertThat(imageBytes).startsWith((byte) 0x89, 'P', 'N', 'G');
+            assertThat(decodeQr(imageBytes)).isEqualTo(PAYMENT_URL);
+        }
+
+        @Test
+        @DisplayName("should render QR code from SpEL expression producing qr: value")
+        void shouldRenderQrFromExpression() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:${qr_target}");
+
+            Map<String, Object> rawContext = Map.of("qr_target", "qr:" + PAYMENT_URL);
+
+            int replaced = DocxImageReplacer.replaceImages(pkg, rawContext, cacheDir);
+
+            assertThat(replaced).isEqualTo(1);
+            assertThat(decodeQr(getImageBytes(pkg))).isEqualTo(PAYMENT_URL);
+        }
+
+        @Test
+        @DisplayName("should keep original image when QR payload is blank")
+        void shouldKeepOriginalForBlankPayload() throws Exception {
+            WordprocessingMLPackage pkg = createDocxWithImage("image:qr_code");
+
+            Map<String, Object> rawContext = Map.of("qr_code", "qr:");
+
+            int replaced = DocxImageReplacer.replaceImages(pkg, rawContext, cacheDir);
+
+            assertThat(replaced).isZero();
+            assertThat(getImageBytes(pkg)).isEqualTo(TINY_PNG);
+        }
+    }
+
     // ==================== RELATIVE PATH IMAGE REPLACEMENT ====================
 
     @Nested

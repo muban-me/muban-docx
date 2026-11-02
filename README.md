@@ -11,7 +11,7 @@ via docx4j + Apache FOP.
 | **SpEL expressions** | `${name}`, `${price * qty}`, `${price > 1000 ? 'Premium' : 'Standard'}` — powered by Spring Expression Language with a sandboxed evaluator |
 | **Conditional blocks** | `#{if expr}` / `#{else}` / `#{fi}` — paragraph-level conditionals with boolean coercion |
 | **Table row replication** | Automatically clone template rows for array data (`${items.name}`) |
-| **Dynamic images** | Replace placeholder images via data-URI, URL, relative path, or SpEL expression in alt-text |
+| **Dynamic images** | Replace placeholder images via data-URI, URL, relative path, SpEL expression, or generated **QR code** in alt-text |
 | **Table style flattening** | Resolves Word table conditional formatting (banding, header/footer rows, first/last columns) for PDF and HTML export fidelity |
 | **PDF export** | DOCX → PDF via docx4j FO pipeline + Apache FOP, with optional password encryption and permission control |
 | **HTML export** | DOCX → HTML as a self-contained ZIP micro-site (`index.html` + `index.html_files/` assets) via docx4j XSLT pipeline |
@@ -19,7 +19,7 @@ via docx4j + Apache FOP.
 | **Format map** | Per-placeholder format patterns (`#,##0.00`, `dd.MM.yyyy`) applied after SpEL evaluation via `.formatMap()` |
 | **Soft line break handling** | Runs containing `w:br` (soft line breaks) are split before processing, preventing placeholder corruption |
 | **Locale-aware formatting** | Number and date formatting respects `Locale` (`1 234,56` for pl-PL) |
-| **Zero runtime dependencies** | beyond docx4j, Spring Expression Language, and SLF4J |
+| **Zero runtime dependencies** | beyond docx4j, Spring Expression Language, SLF4J and ZXing (QR codes only) |
 
 ## Requirements
 
@@ -34,7 +34,7 @@ via docx4j + Apache FOP.
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.3.0</version>
+    <version>1.4.0</version>
 </dependency>
 ```
 
@@ -162,6 +162,29 @@ Insert a placeholder image in the DOCX and set its **alt-text** to `image:{key}`
 | `image:logo` | If no context value is found, the key itself (`logo`) is used as a relative path within the template ZIP |
 | `image:${gender == 'F' ? 'female.png' : 'male.png'}` | SpEL expression evaluated first, then the result goes through the same resolution cascade |
 | `image:assets/${department}/stamp.png` | Mixed literal + SpEL — expressions are evaluated and the resulting path is resolved |
+
+#### QR codes
+
+A context value prefixed with `qr:` is rendered as a PNG QR code in place of the placeholder —
+no need to generate the image upstream:
+
+```java
+Map<String, Object> data = Map.of(
+    "qr_code", "qr:https://www.example.com/pay?nr=123456&amount=100.00"
+);
+```
+
+```text
+Alt-text: image:qr_code
+```
+
+Codes use error correction level `M` (≈15% recovery), a 2-module quiet zone and UTF-8 encoding.
+The symbol is rendered oversampled (300 px minimum) and scaled down by the picture frame in the
+template, so the placeholder image **must be square** — otherwise the code will be distorted.
+Because the image part keeps its original content type, the placeholder must be a **PNG**.
+
+Blank payloads, and any encoding failure, leave the original template image untouched.
+The encoder is available directly as `QrCodeEncoder.toPng("text")`.
 
 ## PDF security
 

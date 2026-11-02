@@ -52,6 +52,8 @@ import java.util.regex.Pattern;
  * <p><b>Resolution cascade (highest priority first):</b></p>
  * <ol>
  *   <li><b>Inline Base64</b> — context value starting with {@code data:image/} is decoded as a data URI</li>
+ *   <li><b>QR code</b> — context value starting with {@code qr:} is rendered as a PNG QR code
+ *       (see {@link QrCodeEncoder})</li>
  *   <li><b>URL</b> — context value starting with {@code http://} or {@code https://} is fetched via HTTP GET</li>
  *   <li><b>Relative path (from context)</b> — any other string value is treated as a relative path within the template package</li>
  *   <li><b>Key as path</b> — if no context value, the key itself is used as a relative path within the template package</li>
@@ -454,6 +456,10 @@ public final class DocxImageReplacer {
             return decodeDataUri(value);
         }
 
+        if (QrCodeEncoder.isQrValue(value)) {
+            return QrCodeEncoder.toPng(QrCodeEncoder.payloadOf(value));
+        }
+
         if (value.startsWith(HTTP_PREFIX) || value.startsWith(HTTPS_PREFIX)) {
             return loadFromUrl(value);
         }
@@ -482,6 +488,9 @@ public final class DocxImageReplacer {
         if (value instanceof String stringValue) {
             if (stringValue.startsWith(DATA_URI_PREFIX)) {
                 return decodeDataUri(stringValue);
+            }
+            if (QrCodeEncoder.isQrValue(stringValue)) {
+                return QrCodeEncoder.toPng(QrCodeEncoder.payloadOf(stringValue));
             }
             if (stringValue.startsWith(HTTP_PREFIX) || stringValue.startsWith(HTTPS_PREFIX)) {
                 return loadFromUrl(stringValue);

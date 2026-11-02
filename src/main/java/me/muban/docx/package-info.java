@@ -2,7 +2,8 @@
  * <b>muban-docx</b> — a pure-Java DOCX template engine built on docx4j.
  *
  * <p>Provides SpEL-based placeholder substitution, conditional blocks,
- * table row replication, image replacement, and PDF export for Word documents.
+ * table row replication, image replacement (including generated QR codes),
+ * and PDF export for Word documents.</p>
  *
  * <h2>Quick start</h2>
  * <pre>{@code
