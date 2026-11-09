@@ -1,7 +1,7 @@
 # muban-docx
 
 Modern DOCX template engine for Java — SpEL expressions, conditional blocks,
-table row replication, dynamic image replacement, and multi-format export (DOCX, PDF, HTML, TXT)
+table row replication, dynamic image replacement, and multi-format export (DOCX, PDF, HTML, TXT, PNG)
 via docx4j + Apache FOP.
 
 ## Features
@@ -14,6 +14,7 @@ via docx4j + Apache FOP.
 | **Dynamic images** | Replace placeholder images via data-URI, URL, relative path, SpEL expression, or generated **QR code** in alt-text |
 | **Table style flattening** | Resolves Word table conditional formatting (banding, header/footer rows, first/last columns) for PDF and HTML export fidelity |
 | **PDF export** | DOCX → PDF via docx4j FO pipeline + Apache FOP, with optional password encryption and permission control |
+| **PNG export** | DOCX → PNG via docx4j FO pipeline + Apache FOP, one `page_N.png` per page packaged as a ZIP archive — no intermediate PDF |
 | **HTML export** | DOCX → HTML as a self-contained ZIP micro-site (`index.html` + `index.html_files/` assets) via docx4j XSLT pipeline |
 | **TXT export** | Plain-text extraction with configurable line separator, trailing-whitespace trimming, and soft word-wrap |
 | **Format map** | Per-placeholder format patterns (`#,##0.00`, `dd.MM.yyyy`) applied after SpEL evaluation via `.formatMap()` |
@@ -25,6 +26,7 @@ via docx4j + Apache FOP.
 
 - Java 17+
 - Maven 3.8+
+- PDF and PNG export require the optional `docx4j-export-fo` dependency on the classpath
 
 ## Quick start
 
@@ -255,6 +257,37 @@ String zipPath = MubanDocxEngine.builder()
 //   <uuid>/index.html_files/image1.png
 ```
 
+## PNG export
+
+PNG export renders the document's XSL-FO layout directly with Apache FOP — no
+intermediate PDF is created. Each page is written as `page_N.png` and packaged
+into a ZIP archive.
+
+```java
+String zipPath = MubanDocxEngine.builder()
+    .template(new File("template.docx"))
+    .data(data)
+    .outputDir("/tmp/output/")
+    .outputFormat("png")
+    .pngOptions(new PngExportOptions(2.0f))  // 2× resolution (144 DPI)
+    .build()
+    .generate();
+// zipPath → /tmp/output/<uuid>.zip
+// Contents:
+//   <uuid>/page_1.png
+//   <uuid>/page_2.png
+//   ...
+```
+
+### PNG export options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `zoomRatio` | `1.0` | Output resolution multiplier. `1.0` = native page size (~72 DPI), `2.0` = 2× (~144 DPI), `4.0` = 4× (~288 DPI). Must be a positive, finite number. |
+
+Higher zoom ratios produce sharper images but increase memory usage and file
+size quadratically (2× zoom = 4× pixel count). Pages are rendered sequentially.
+
 ## TXT export
 
 Plain-text export walks all `w:p` paragraphs in the DOCX body (including tables)
@@ -302,7 +335,7 @@ MubanDocxEngine (facade)
  ├── DocxImageReplacer          dynamic image replacement
  ├── DocxTableStyleResolver     table style flattening for FO export
  ├── DocxContextBuilder         parameter + data merging
- ├── DocxExporter               DOCX save + PDF FO pipeline + HTML XSLT pipeline + TXT extraction
+ ├── DocxExporter               DOCX save + PDF FO pipeline + PNG FOP pipeline + HTML XSLT pipeline + TXT extraction
  ├── DocxXmlUtils               low-level XML helpers
  └── LocaleUtils                locale parsing + number/date formatting
 ```
