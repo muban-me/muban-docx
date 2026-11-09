@@ -7,13 +7,13 @@
 
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
     <packaging>jar</packaging>
 
     <name>muban-docx</name>
     <description>
         Modern DOCX template engine for Java — SpEL expressions, conditional blocks,
-        table row replication, dynamic image replacement, and PDF export via docx4j + Apache FOP.
+        table row replication, dynamic image replacement, and PDF/PNG export via docx4j + Apache FOP.
     </description>
     <url>https://github.com/muban-me/muban-docx</url>
 

@@ -84,6 +84,7 @@ public final class MubanDocxEngine {
     private final PdfExportOptions pdfOptions;
     private final PdfSecurityCallback securityCallback;
     private final TxtExportOptions txtOptions;
+    private final PngExportOptions pngOptions;
 
     private MubanDocxEngine(WordprocessingMLPackage wordPackage,
                              Map<String, Object> rawContext,
@@ -95,7 +96,8 @@ public final class MubanDocxEngine {
                              File assetDir,
                              PdfExportOptions pdfOptions,
                              PdfSecurityCallback securityCallback,
-                             TxtExportOptions txtOptions) {
+                             TxtExportOptions txtOptions,
+                             PngExportOptions pngOptions) {
         this.wordPackage = wordPackage;
         this.rawContext = rawContext;
         this.dataArrays = dataArrays;
@@ -107,6 +109,7 @@ public final class MubanDocxEngine {
         this.pdfOptions = pdfOptions;
         this.securityCallback = securityCallback;
         this.txtOptions = txtOptions;
+        this.pngOptions = pngOptions;
     }
 
     /**
@@ -140,7 +143,7 @@ public final class MubanDocxEngine {
 
         // Step 4: Export
         String result = DocxExporter.exportDocument(
-                wordPackage, outputFormat, outputDir, pdfOptions, securityCallback, txtOptions);
+                wordPackage, outputFormat, outputDir, pdfOptions, securityCallback, txtOptions, pngOptions);
 
         long elapsed = System.currentTimeMillis() - start;
         log.info("Template generation completed in {} ms → {}", elapsed, outputFormat.toUpperCase());
@@ -425,6 +428,7 @@ public final class MubanDocxEngine {
         private PdfExportOptions pdfOptions;
         private PdfSecurityCallback securityCallback;
         private TxtExportOptions txtOptions;
+        private PngExportOptions pngOptions;
         private Map<String, String> formatMap;
 
         /**
@@ -492,7 +496,7 @@ public final class MubanDocxEngine {
         }
 
         /**
-         * Set the output format: "docx", "pdf", "html", or "txt" (defaults to "docx").
+         * Set the output format: "docx", "pdf", "html", "txt", or "png" (defaults to "docx").
          */
         public Builder outputFormat(String format) {
             this.outputFormat = format;
@@ -532,6 +536,14 @@ public final class MubanDocxEngine {
         }
 
         /**
+         * Set PNG export options (zoom ratio / output resolution).
+         */
+        public Builder pngOptions(PngExportOptions opts) {
+            this.pngOptions = opts;
+            return this;
+        }
+
+        /**
          * Set the format map for post-evaluation formatting.
          * Maps placeholder names to format patterns (e.g. {@code #,##0.00}, {@code dd.MM.yyyy}).
          */
@@ -565,7 +577,7 @@ public final class MubanDocxEngine {
                     wordPackage, ctx, arrays,
                     formatMap != null ? formatMap : Collections.emptyMap(),
                     locale, outputDir, outputFormat, assetDir,
-                    pdfOptions, securityCallback, txtOptions);
+                    pdfOptions, securityCallback, txtOptions, pngOptions);
         }
     }
 }

@@ -23,12 +23,17 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Exports a filled DOCX document to the requested output format (DOCX, PDF, HTML, or TXT).
+ * Exports a filled DOCX document to the requested output format (DOCX, PDF, HTML, TXT, or PNG).
  *
  * <p>For PDF output, resolves table conditional formatting before export (since the
  * XSL-FO pipeline doesn't handle table style properties), sets up font mapping,
  * and optionally applies PDF security settings via a caller-provided
  * {@link PdfSecurityCallback}.
+ *
+ * <p>For PNG output, renders the XSL-FO layout directly with Apache FOP — no
+ * intermediate PDF is created. Each page is written as {@code page_N.png} and
+ * packaged into a ZIP archive. The {@link PngExportOptions#zoomRatio()} controls
+ * the output resolution ({@code 1.0} = native page size, ~72 DPI).
  *
  * <p>For HTML output, exports using docx4j's XSLT-based HTML exporter. Images are
  * saved to an {@code index.html_files/} subdirectory (matching the JasperReports
@@ -49,12 +54,14 @@ public class DocxExporter {
      * Export the filled document to the requested format.
      *
      * @param wordPackage    the filled DOCX document
-     * @param format         output format: {@code "docx"}, {@code "pdf"}, {@code "html"}, or {@code "txt"}
+     * @param format         output format: {@code "docx"}, {@code "pdf"}, {@code "html"},
+     *                       {@code "txt"}, or {@code "png"}
      * @param outputDir      directory to write the output file to (created if needed)
      * @param pdfOptions     optional PDF security options (only used for PDF output); may be null
      * @param securityCallback optional callback to apply PDF encryption; may be null
      * @param txtOptions     optional TXT export options (only used for TXT output); may be null
-     * @return absolute path to the generated file (ZIP archive for HTML format)
+     * @param pngOptions     optional PNG export options (only used for PNG output); may be null
+     * @return absolute path to the generated file (ZIP archive for HTML and PNG formats)
      * @throws MubanDocxException if export fails
      * @throws UnsupportedOutputFormatException if format is not supported
      */
@@ -63,7 +70,8 @@ public class DocxExporter {
                                          String outputDir,
                                          PdfExportOptions pdfOptions,
                                          PdfSecurityCallback securityCallback,
-                                         TxtExportOptions txtOptions) {
+                                         TxtExportOptions txtOptions,
+                                         PngExportOptions pngOptions) {
         try {
             Files.createDirectories(Paths.get(outputDir));
         } catch (Exception e) {
@@ -96,6 +104,10 @@ public class DocxExporter {
                 outputPath = outputDir + File.separator + filename + ".txt";
                 exportToTxt(wordPackage, outputPath, txtOptions);
             }
+            case "png" -> {
+                outputPath = outputDir + File.separator + filename + ".zip";
+                exportToPng(wordPackage, outputDir, filename, outputPath, pngOptions);
+            }
             default -> throw new UnsupportedOutputFormatException(format);
         }
 
@@ -111,14 +123,26 @@ public class DocxExporter {
     }
 
     /**
-     * Backward-compatible overload without TXT options.
+     * Backward-compatible overload without PNG options.
+     */
+    public static String exportDocument(WordprocessingMLPackage wordPackage,
+                                         String format,
+                                         String outputDir,
+                                         PdfExportOptions pdfOptions,
+                                         PdfSecurityCallback securityCallback,
+                                         TxtExportOptions txtOptions) {
+        return exportDocument(wordPackage, format, outputDir, pdfOptions, securityCallback, txtOptions, null);
+    }
+
+    /**
+     * Backward-compatible overload without TXT or PNG options.
      */
     public static String exportDocument(WordprocessingMLPackage wordPackage,
                                          String format,
                                          String outputDir,
                                          PdfExportOptions pdfOptions,
                                          PdfSecurityCallback securityCallback) {
-        return exportDocument(wordPackage, format, outputDir, pdfOptions, securityCallback, null);
+        return exportDocument(wordPackage, format, outputDir, pdfOptions, securityCallback, null, null);
     }
 
     /**
@@ -140,6 +164,21 @@ public class DocxExporter {
      */
     public static String exportHtml(WordprocessingMLPackage wordPackage, String outputDir) {
         return exportDocument(wordPackage, "html", outputDir, null, null, null);
+    }
+
+    /**
+     * Export to PNG page images packaged as a ZIP archive (convenience overload).
+     */
+    public static String exportPng(WordprocessingMLPackage wordPackage, String outputDir) {
+        return exportDocument(wordPackage, "png", outputDir, null, null, null, null);
+    }
+
+    /**
+     * Export to PNG page images with custom options (convenience overload).
+     */
+    public static String exportPng(WordprocessingMLPackage wordPackage, String outputDir,
+                                    PngExportOptions pngOptions) {
+        return exportDocument(wordPackage, "png", outputDir, null, null, null, pngOptions);
     }
 
     /**
@@ -224,27 +263,7 @@ public class DocxExporter {
         // Resolve table conditional formatting (cnfStyle) before FO export
         DocxTableStyleResolver.resolveTableConditionalFormatting(wordPackage);
 
-        // Font mapper MUST be set before FOSettings.setOpcPackage()
-        try {
-            IdentityPlusMapper mapper = new IdentityPlusMapper();
-            wordPackage.setFontMapper(mapper);
-
-            // Map any unmapped document fonts to DejaVu Sans to avoid
-            // FOP falling back to non-embedded base-14 Type 1 fonts
-            PhysicalFont fallback = PhysicalFonts.get("DejaVu Sans");
-            if (fallback != null) {
-                for (String fontName : wordPackage.getMainDocumentPart().fontsInUse()) {
-                    if (mapper.get(fontName) == null) {
-                        mapper.put(fontName, fallback);
-                        log.debug("Font '{}' not available — mapped to fallback '{}'",
-                                fontName, fallback.getName());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Could not set up font mapper for PDF export, " +
-                     "bold/italic may not render correctly: {}", e.getMessage());
-        }
+        prepareFontMapperForFo(wordPackage);
 
         FOSettings foSettings = Docx4J.createFOSettings();
         foSettings.setApacheFopMime("application/pdf");
@@ -267,6 +286,98 @@ public class DocxExporter {
                 throw new MubanDocxException("PDF_POST_PROCESSING_FAILED",
                         "Failed to apply PDF post-processing: " + e.getMessage(), e);
             }
+        }
+    }
+
+    /**
+     * Internal PNG export via docx4j's XSL-FO pipeline and Apache FOP's native
+     * PNG renderer. No intermediate PDF is created.
+     *
+     * <p>FOP writes the first page to {@code page_1.png} and subsequent pages to
+     * {@code page_2.png}, {@code page_3.png}, etc. The files are then packaged
+     * into a ZIP archive and the temporary directory is removed.</p>
+     */
+    private static void exportToPng(WordprocessingMLPackage wordPackage,
+                                     String outputDir,
+                                     String dirName,
+                                     String zipOutputPath,
+                                     PngExportOptions pngOptions) {
+        // Resolve table conditional formatting (cnfStyle) before FO export
+        DocxTableStyleResolver.resolveTableConditionalFormatting(wordPackage);
+
+        prepareFontMapperForFo(wordPackage);
+
+        float zoomRatio = pngOptions != null
+                ? pngOptions.zoomRatio()
+                : PngExportOptions.DEFAULT_ZOOM_RATIO;
+        Path pngDir = Paths.get(outputDir, dirName);
+        boolean zipped = false;
+
+        try {
+            Files.createDirectories(pngDir);
+
+            FOSettings foSettings = Docx4J.createFOSettings();
+            foSettings.setApacheFopMime("image/png");
+            // page_.png makes FOP write page_2.png, page_3.png, ... for pages 2+
+            foSettings.setCustomFoRenderer(
+                    new PngFoRenderer(pngDir.resolve("page_.png").toFile(), zoomRatio));
+            // setOpcPackage() must be called after the font mapper is configured
+            foSettings.setOpcPackage(wordPackage);
+
+            Path firstPage = pngDir.resolve("page_1.png");
+            try (OutputStream os = Files.newOutputStream(firstPage)) {
+                Docx4J.toFO(foSettings, os, Docx4J.FLAG_EXPORT_PREFER_XSL);
+            }
+
+            if (!Files.exists(firstPage) || Files.size(firstPage) == 0) {
+                throw new MubanDocxException("EXPORT_FAILED",
+                        "PNG export failed — no pages were rendered", null);
+            }
+
+            zipDirectory(pngDir, zipOutputPath);
+            zipped = true;
+        } catch (MubanDocxException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new MubanDocxException("EXPORT_FAILED",
+                    "PNG export failed: " + e.getMessage(), e);
+        } finally {
+            deleteDirectoryQuietly(pngDir);
+            if (!zipped) {
+                try {
+                    Files.deleteIfExists(Paths.get(zipOutputPath));
+                } catch (IOException ignored) {
+                    // best-effort cleanup of a partial ZIP
+                }
+            }
+        }
+    }
+
+    /**
+     * Configures the docx4j font mapper for the XSL-FO pipelines.
+     *
+     * <p>Maps fonts that are not available to DejaVu Sans so FOP does not fall
+     * back to non-embedded base-14 Type 1 fonts. The mapper must be set before
+     * {@code FOSettings.setOpcPackage()}.</p>
+     */
+    private static void prepareFontMapperForFo(WordprocessingMLPackage wordPackage) {
+        try {
+            IdentityPlusMapper mapper = new IdentityPlusMapper();
+            wordPackage.setFontMapper(mapper);
+
+            PhysicalFont fallback = PhysicalFonts.get("DejaVu Sans");
+            if (fallback != null) {
+                for (String fontName : wordPackage.getMainDocumentPart().fontsInUse()) {
+                    if (mapper.get(fontName) == null) {
+                        mapper.put(fontName, fallback);
+                        log.debug("Font '{}' not available — mapped to fallback '{}'",
+                                fontName, fallback.getName());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not set up font mapper for FO export, " +
+                     "bold/italic may not render correctly: {}", e.getMessage());
         }
     }
 

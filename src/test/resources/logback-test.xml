@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- docx4j and FOP emit very verbose DEBUG logs during FO/PNG rendering. -->
+    <logger name="org.docx4j" level="WARN"/>
+    <logger name="org.apache.fop" level="WARN"/>
+    <logger name="org.apache.xmlgraphics" level="WARN"/>
+
+    <!-- Keep the library's own INFO/WARN logs visible; only third-party noise is suppressed. -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
