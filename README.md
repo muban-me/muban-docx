@@ -9,6 +9,7 @@ via docx4j + Apache FOP.
 | Feature | Description |
 | --- | --- |
 | **SpEL expressions** | `${name}`, `${price * qty}`, `${price > 1000 ? 'Premium' : 'Standard'}` — powered by Spring Expression Language with a sandboxed evaluator |
+| **Rich text values** | `${html:footer}` renders a whitelisted HTML subset (`<br>`, `<b>`, `<i>`, `<u>`, `<sup>`, `<sub>`, entities) as Word runs — for HTML fragments coming from a CMS or rules engine |
 | **Conditional blocks** | `#{if expr}` / `#{else}` / `#{fi}` — paragraph-level conditionals with boolean coercion |
 | **Table row replication** | Automatically clone template rows for array data (`${items.name}`) |
 | **Dynamic images** | Replace placeholder images via data-URI, URL, relative path, SpEL expression, or generated **QR code** in alt-text |
@@ -36,7 +37,7 @@ via docx4j + Apache FOP.
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
 </dependency>
 ```
 
@@ -128,6 +129,46 @@ ${name.toUpperCase()}
 ${items.size()}
 ```
 
+### Rich text values
+
+Values managed outside Word (legal footers, clauses, marketing texts) are often stored
+as HTML. Prefix the placeholder with `html:` to render a whitelisted HTML subset
+instead of printing the markup literally:
+
+```text
+${html:marketing_footer}
+```
+
+| Input | Result |
+| --- | --- |
+| `<br>`, `<br/>` | line break |
+| `<b>`, `<strong>` | bold |
+| `<i>`, `<em>` | italic |
+| `<u>` | single underline |
+| `<sup>`, `<sub>` | superscript / subscript |
+| `<p>`, `<div>`, `<li>`, `<tr>` | paragraph boundary (single line break) |
+| `&amp;`, `&lt;`, `&gt;`, `&nbsp;`, numeric entities | decoded characters |
+| any other tag | stripped, inner text kept |
+
+Rules:
+
+- **Opt-in only.** Without the `html:` prefix the value is inserted as plain text —
+  literal `<b>` stays `<b>`.
+- **Formatting is additive.** The template's run formatting is preserved; HTML only
+  toggles bold/italic/underline/vertical alignment on top of it. Use `&lt;b&gt;` inside
+  a rich value to show literal markup.
+- **CSS, links, images and tables are intentionally not supported.** Presentation must
+  come from the template, not from the data; images have their own channel (`image:` alt-text).
+- **Never fails.** Malformed input is treated as text, unknown tags are stripped, and values
+  longer than 20 000 characters degrade to plain text.
+
+The prefix works anywhere a placeholder works, including headers and footers, and can
+wrap any expression: `${html:footer != null ? footer : ''}`.
+
+If a template cannot be edited, the same behaviour can be forced from code with
+`.richTextKeys(Set.of("marketing_footer"))` — the in-template marker is the recommended
+mechanism, because it keeps the intent versioned with the document.
+
 ### Conditional blocks
 
 Mark conditional paragraphs with `#{if}` / `#{else}` / `#{fi}`:
@@ -156,7 +197,8 @@ The engine detects the array binding and replicates the row for each element.
 
 ### Dynamic images
 
-Insert a placeholder image in the DOCX and set its **alt-text** to `image:{key}`, where `{key}` identifies the image to replace. The key is resolved via the following cascade:
+Insert a placeholder image in the DOCX and set its **alt-text** to `image:{key}`, where `{key}`
+identifies the image to replace. The key is resolved via the following cascade:
 
 | Alt-text example | Resolution |
 | --- | --- |

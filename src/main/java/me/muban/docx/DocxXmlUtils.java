@@ -151,12 +151,36 @@ public final class DocxXmlUtils {
         return false;
     }
 
-    private static R buildRun(RPr rPr, List<Object> content) {
+    /**
+     * Build a new run from a base formatting and a list of children (text, breaks, ...).
+     *
+     * <p>The formatting is deep-copied, so the new run can be modified without
+     * affecting the run it was derived from.
+     *
+     * @param rPr     base run properties (may be {@code null})
+     * @param content run children, e.g. {@link Text} or {@link Br}
+     * @return a new {@link R} instance
+     */
+    public static R buildRun(RPr rPr, List<Object> content) {
         R newRun = new R();
         if (rPr != null) {
             newRun.setRPr(XmlUtils.deepCopy(rPr));
         }
         newRun.getContent().addAll(content);
         return newRun;
+    }
+
+    /**
+     * Build a plain text run.
+     *
+     * @param rPr   base run properties (may be {@code null})
+     * @param value text to place in the run
+     * @return a new {@link R} instance containing one {@link Text} element
+     */
+    public static R textRun(RPr rPr, String value) {
+        Text text = new Text();
+        text.setValue(value);
+        text.setSpace("preserve");
+        return buildRun(rPr, List.of(text));
     }
 }
