@@ -30,7 +30,8 @@ import java.util.regex.Pattern;
  * <ol>
  *   <li><b>Load</b> — open a DOCX file or stream</li>
  *   <li><b>Build context</b> — merge parameters and data into an evaluation context</li>
- *   <li><b>Conditional blocks</b> — evaluate {@code #{if}}/#{else}/{@code #{fi}} markers</li>
+ *   <li><b>Conditional blocks</b> — evaluate {@code #{if}}/#{elseif}/#{else}/{@code #{fi}} markers,
+ *       including nested blocks</li>
  *   <li><b>Table row replication</b> — clone template rows for data arrays</li>
  *   <li><b>Placeholder substitution</b> — replace {@code ${expr}} with values</li>
  *   <li><b>Image replacement</b> — swap placeholder images with dynamic content</li>

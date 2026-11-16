@@ -10,7 +10,7 @@ via docx4j + Apache FOP.
 | --- | --- |
 | **SpEL expressions** | `${name}`, `${price * qty}`, `${price > 1000 ? 'Premium' : 'Standard'}` — powered by Spring Expression Language with a sandboxed evaluator |
 | **Rich text values** | `${html:footer}` renders a whitelisted HTML subset (`<br>`, `<b>`, `<i>`, `<u>`, `<sup>`, `<sub>`, entities) as Word runs — for HTML fragments coming from a CMS or rules engine |
-| **Conditional blocks** | `#{if expr}` / `#{else}` / `#{fi}` — paragraph-level conditionals with boolean coercion |
+| **Conditional blocks** | `#{if expr}` / `#{elseif expr}` / `#{else}` / `#{fi}` — paragraph-level branches with boolean coercion, nesting supported |
 | **Table row replication** | Automatically clone template rows for array data (`${items.name}`) |
 | **Dynamic images** | Replace placeholder images via data-URI, URL, relative path, SpEL expression, or generated **QR code** in alt-text |
 | **Table style flattening** | Resolves Word table conditional formatting (banding, header/footer rows, first/last columns) for PDF and HTML export fidelity |
@@ -25,7 +25,7 @@ via docx4j + Apache FOP.
 
 ## Requirements
 
-- Java 17+
+- Java 21+
 - Maven 3.8+
 - PDF and PNG export require the optional `docx4j-export-fo` dependency on the classpath
 
@@ -37,7 +37,7 @@ via docx4j + Apache FOP.
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.6.0</version>
+    <version>1.7.0</version>
 </dependency>
 ```
 
@@ -174,7 +174,7 @@ mechanism, because it keeps the intent versioned with the document.
 
 ### Conditional blocks
 
-Mark conditional paragraphs with `#{if}` / `#{else}` / `#{fi}`:
+Mark conditional paragraphs with `#{if}` / `#{elseif}` / `#{else}` / `#{fi}`:
 
 ```text
 #{if showDiscount}
@@ -184,9 +184,23 @@ Standard pricing applies.
 #{fi}
 ```
 
+`#{elseif expr}` (alias `#{elif expr}`) adds intermediate branches; they are tested top-down and
+the first match wins. `#{else}` must be the last branch.
+
+```text
+#{if type == 'A'}
+Alpha
+#{elseif type == 'B'}
+Beta
+#{else}
+Other
+#{fi}
+```
+
 - Conditions use SpEL evaluation with boolean coercion
 - Each marker must be a separate paragraph
-- Blocks cannot be nested
+- Blocks may be nested (the matcher counts `#{if}` depth); keep nesting shallow for readability
+- A whole block with no matching branch and no `#{else}` is removed
 
 ### Table row replication
 
@@ -374,14 +388,18 @@ String txtPath = MubanDocxEngine.builder()
 
 ```text
 MubanDocxEngine (facade)
- ├── DocxConditionalProcessor   #{if}/{else}/{fi} block processing
+ ├── DocxConditionalProcessor   #{if}/#{elseif}/#{else}/#{fi} blocks, nesting supported
  ├── DocxTableProcessor         table row replication + placeholder substitution
+ ├── DocxRichText               whitelisted HTML → Word runs for ${html:...}
  ├── DocxExpressionEvaluator    SpEL sandboxed evaluation
  ├── DocxImageReplacer          dynamic image replacement
+ ├── QrCodeEncoder              QR code rendering for qr: values
  ├── DocxTableStyleResolver     table style flattening for FO export
  ├── DocxContextBuilder         parameter + data merging
  ├── DocxExporter               DOCX save + PDF FO pipeline + PNG FOP pipeline + HTML XSLT pipeline + TXT extraction
+ ├── PngFoRenderer              page rasterisation for PNG export
  ├── DocxXmlUtils               low-level XML helpers
+ ├── DocxRunUtils               run re-joining (markers split by Word) + formatting comparison
  └── LocaleUtils                locale parsing + number/date formatting
 ```
 

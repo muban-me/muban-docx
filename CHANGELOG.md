@@ -7,6 +7,35 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-11-16
+
+### Added
+
+- **Nested conditional blocks.** `#{if}` blocks can now contain other `#{if}` blocks, to any depth.
+  The matcher counts `#{if}` depth instead of taking the first `#{fi}` it sees, so an inner block is
+  closed by its own `#{fi}`. Previously a nested block silently corrupted the output: the inner
+  `#{fi}` terminated the outer block and the remaining markers were printed literally.
+- **`#{elseif expr}` branches.** A conditional block may now have any number of intermediate
+  branches (alias `#{elif expr}`). Branches are evaluated top-down and the first match wins, which
+  makes the construct behave like a `switch`. `DocxConditionalProcessor.ELSEIF_PATTERN` is exposed
+  for tooling.
+
+### Changed
+
+- `DocxConditionalProcessor.processConditionals` resolves a block as a *list of branches* rather
+  than an `#{if}`/`#{else}`/`#{fi}` triple. A block where no branch matches **and** there is no
+  `#{else}` is now removed entirely; previously the `#{if}` and `#{fi}` markers were consumed as
+  well, so the observable behaviour is unchanged.
+- `findClosingMarkers(List, int)` (package-private) is now depth-aware: it returns the `#{fi}` that
+  closes the scanned block, not the first one in the list.
+- `extractConditionalVariables` also collects variables referenced in `#{elseif}` expressions, so
+  template uploads register the right parameters.
+- An `#{elseif}` placed after `#{else}` is ignored with a warning, and its body stays in the else
+  branch. Duplicate `#{else}` markers are dropped the same way.
+- Run merging (markers split across Word runs) moved into a new package-private helper,
+  `DocxRunUtils`. The logic is unchanged and still marker-based; the processor now only deals with
+  block structure and branch selection.
+
 ## [1.6.0] — 2026-11-16
 
 ### Added
