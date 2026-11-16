@@ -7,7 +7,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-## [1.5.0] — 2026-11-16
+## [1.6.0] — 2026-11-16
 
 ### Added
 
@@ -28,6 +28,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   (output unchanged, used for every unmarked placeholder) and a run-rebuilding path used only
   when a rich-text placeholder is present.
 - Rich text is processed in the document body, headers, footers and table cells alike.
+
+## [1.5.0] — 2026-11-09
+
+### Added
+
+- **PNG export.** `outputFormat("png")` renders the document's XSL-FO layout directly with Apache FOP
+  — no intermediate PDF — and packages one `page_N.png` per page into a ZIP archive.
+- `PngExportOptions` with a `zoomRatio` output-resolution multiplier (`1.0` = native page size,
+  `2.0` = 2×, `4.0` = 4×).
+- New class: `PngFoRenderer`.
+
+### Changed
+
+- `MubanDocxEngine.Builder` accepts `pngOptions(PngExportOptions)`.
 
 ## [1.4.0] — 2026-11-02
 

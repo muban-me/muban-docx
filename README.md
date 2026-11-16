@@ -37,7 +37,7 @@ via docx4j + Apache FOP.
 <dependency>
     <groupId>me.muban</groupId>
     <artifactId>muban-docx</artifactId>
-    <version>1.5.0</version>
+    <version>1.6.0</version>
 </dependency>
 ```
 
@@ -157,6 +157,9 @@ Rules:
 - **Formatting is additive.** The template's run formatting is preserved; HTML only
   toggles bold/italic/underline/vertical alignment on top of it. Use `&lt;b&gt;` inside
   a rich value to show literal markup.
+- **Bold always renders, from a bold file or synthesised.** `<b>` sets `w:b`. If the family
+  provides a bold face the renderer uses it; if it does not ("… Light" families) the regular
+  face's outline is thickened instead, at identical glyph advances — so bold never reflows.
 - **CSS, links, images and tables are intentionally not supported.** Presentation must
   come from the template, not from the data; images have their own channel (`image:` alt-text).
 - **Never fails.** Malformed input is treated as text, unknown tags are stripped, and values
