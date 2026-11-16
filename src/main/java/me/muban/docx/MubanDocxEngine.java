@@ -12,6 +12,7 @@ import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAccessor;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -73,10 +74,22 @@ public final class MubanDocxEngine {
     /** Pattern for a simple key: Java identifier, optionally with dot-separated parts (e.g. address.city). */
     private static final Pattern SIMPLE_KEY_PATTERN = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*$");
 
+    /**
+     * Prefix marking a placeholder as rich text: {@code ${html:marketing_footer}}.
+     *
+     * <p>A marked value is converted from a whitelisted HTML subset into Word runs
+     * (line breaks, bold, italic, underline, superscript/subscript). Unmarked
+     * placeholders stay plain text — literal {@code <b>} is printed as-is.
+     *
+     * @see DocxRichText
+     */
+    public static final String RICH_TEXT_PREFIX = "html:";
+
     private final WordprocessingMLPackage wordPackage;
     private final Map<String, Object> rawContext;
     private final Map<String, List<Map<String, Object>>> dataArrays;
     private final Map<String, String> formatMap;
+    private final Set<String> richTextKeys;
     private final Locale locale;
     private final String outputDir;
     private final String outputFormat;
@@ -90,6 +103,7 @@ public final class MubanDocxEngine {
                              Map<String, Object> rawContext,
                              Map<String, List<Map<String, Object>>> dataArrays,
                              Map<String, String> formatMap,
+                             Set<String> richTextKeys,
                              Locale locale,
                              String outputDir,
                              String outputFormat,
@@ -102,6 +116,7 @@ public final class MubanDocxEngine {
         this.rawContext = rawContext;
         this.dataArrays = dataArrays;
         this.formatMap = formatMap;
+        this.richTextKeys = richTextKeys;
         this.locale = locale;
         this.outputDir = outputDir;
         this.outputFormat = outputFormat;
@@ -276,6 +291,12 @@ public final class MubanDocxEngine {
 
     /**
      * Replace ${...} placeholders in a single paragraph.
+     *
+     * <p>Runs that contain a rich-text placeholder ({@code ${html:key}}) are
+     * rebuilt into a sequence of runs so that inline markup survives — line
+     * breaks become {@code w:br}, {@code <b>} becomes {@code w:b}, and so on.
+     * Every other run keeps the original single-run string substitution, which
+     * is both faster and byte-for-byte compatible with previous releases.
      */
     private void replacePlaceholders(P paragraph) {
         // Merge split runs so each ${...} is within a single run
@@ -283,35 +304,140 @@ public final class MubanDocxEngine {
         // Normalize runs containing w:br (soft line breaks) into separate runs
         DocxXmlUtils.splitRunsAtBreaks(paragraph);
 
-        for (Object obj : paragraph.getContent()) {
+        List<Object> content = paragraph.getContent();
+        List<Object> rebuilt = null;
+
+        for (Object obj : content) {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
             if (!(unwrapped instanceof R run)) continue;
 
             String text = DocxXmlUtils.getRunText(run);
             if (!text.contains("${")) continue;
 
-            Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
-            StringBuilder result = new StringBuilder();
-            while (matcher.find()) {
-                String body = matcher.group(1).trim();
-                String replacement = DocxExpressionEvaluator.evaluate(body, rawContext, locale);
-
-                // Apply format pattern for simple key placeholders only
-                if (!formatMap.isEmpty() && isSimpleKey(body) && formatMap.containsKey(body)) {
-                    Object rawValue = rawContext.get(body);
-                    if (rawValue != null) {
-                        String formatted = applyFormat(rawValue, formatMap.get(body), locale);
-                        if (formatted != null) {
-                            replacement = formatted;
-                        }
-                    }
-                }
-
-                matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+            List<R> richRuns = tryBuildRichRuns(run, text);
+            if (richRuns == null) {
+                substitutePlainText(run, text);
+                continue;
             }
-            matcher.appendTail(result);
-            DocxXmlUtils.setRunText(run, result.toString());
+
+            if (rebuilt == null) {
+                rebuilt = new ArrayList<>(content);
+            }
+            int position = indexOfIdentity(rebuilt, obj);
+            if (position < 0) continue;
+            rebuilt.remove(position);
+            rebuilt.addAll(position, richRuns);
         }
+
+        if (rebuilt != null) {
+            content.clear();
+            content.addAll(rebuilt);
+        }
+    }
+
+    /**
+     * Legacy substitution path: evaluate every placeholder and write the result
+     * back into the same run as a single text node.
+     */
+    private void substitutePlainText(R run, String text) {
+        Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
+        StringBuilder result = new StringBuilder();
+        while (matcher.find()) {
+            String body = matcher.group(1).trim();
+            String replacement = DocxExpressionEvaluator.evaluate(body, rawContext, locale);
+            replacement = applyConfiguredFormat(body, replacement);
+            matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(result);
+        DocxXmlUtils.setRunText(run, result.toString());
+    }
+
+    /**
+     * Build a run sequence for a run containing at least one rich-text placeholder.
+     *
+     * @return {@code null} when the run holds no rich placeholder, so the caller
+     *         can fall back to the legacy single-run substitution
+     */
+    private List<R> tryBuildRichRuns(R run, String text) {
+        Matcher probe = PLACEHOLDER_PATTERN.matcher(text);
+        boolean hasRich = false;
+        while (probe.find()) {
+            if (isRichPlaceholder(probe.group(1).trim())) {
+                hasRich = true;
+                break;
+            }
+        }
+        if (!hasRich) {
+            return null;
+        }
+
+        RPr baseRPr = run.getRPr();
+        List<R> produced = new ArrayList<>();
+        Matcher matcher = PLACEHOLDER_PATTERN.matcher(text);
+        int cursor = 0;
+        while (matcher.find()) {
+            if (matcher.start() > cursor) {
+                produced.add(DocxXmlUtils.textRun(baseRPr, text.substring(cursor, matcher.start())));
+            }
+            String body = matcher.group(1).trim();
+            boolean html = hasRichTextPrefix(body);
+            String expression = html ? body.substring(RICH_TEXT_PREFIX.length()).trim() : body;
+
+            String value = DocxExpressionEvaluator.evaluate(expression, rawContext, locale);
+            value = applyConfiguredFormat(expression, value);
+
+            if (html || isRichKey(expression)) {
+                produced.addAll(DocxRichText.toRuns(baseRPr, value));
+            } else {
+                produced.add(DocxXmlUtils.textRun(baseRPr, value));
+            }
+            cursor = matcher.end();
+        }
+        if (cursor < text.length()) {
+            produced.add(DocxXmlUtils.textRun(baseRPr, text.substring(cursor)));
+        }
+        return produced;
+    }
+
+    /**
+     * Apply the per-parameter format pattern (if configured) for simple keys.
+     */
+    private String applyConfiguredFormat(String body, String replacement) {
+        if (formatMap.isEmpty() || !isSimpleKey(body)) {
+            return replacement;
+        }
+        String pattern = formatMap.get(body);
+        if (pattern == null) {
+            return replacement;
+        }
+        Object rawValue = rawContext.get(body);
+        if (rawValue == null) {
+            return replacement;
+        }
+        String formatted = applyFormat(rawValue, pattern, locale);
+        return formatted != null ? formatted : replacement;
+    }
+
+    private boolean isRichPlaceholder(String body) {
+        return hasRichTextPrefix(body) || isRichKey(body);
+    }
+
+    private static boolean hasRichTextPrefix(String body) {
+        return body.length() > RICH_TEXT_PREFIX.length()
+                && body.regionMatches(true, 0, RICH_TEXT_PREFIX, 0, RICH_TEXT_PREFIX.length());
+    }
+
+    private boolean isRichKey(String body) {
+        return !richTextKeys.isEmpty() && isSimpleKey(body) && richTextKeys.contains(body);
+    }
+
+    private static int indexOfIdentity(List<Object> list, Object target) {
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i) == target) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     // ==================== STATIC UTILITIES ====================
@@ -430,6 +556,7 @@ public final class MubanDocxEngine {
         private TxtExportOptions txtOptions;
         private PngExportOptions pngOptions;
         private Map<String, String> formatMap;
+        private Set<String> richTextKeys;
 
         /**
          * Set the template from a pre-loaded package.
@@ -553,6 +680,22 @@ public final class MubanDocxEngine {
         }
 
         /**
+         * Set keys that must be rendered as rich text even without the
+         * {@code ${html:...}} prefix in the template.
+         *
+         * <p>Intended as an escape hatch for templates that cannot be edited.
+         * The in-template {@code html:} marker takes precedence and is the
+         * recommended mechanism — it keeps the intent versioned with the template
+         * instead of hidden in the request.
+         *
+         * @param keys simple placeholder names (e.g. {@code marketing_footer})
+         */
+        public Builder richTextKeys(Set<String> keys) {
+            this.richTextKeys = keys;
+            return this;
+        }
+
+        /**
          * Build the engine instance.
          *
          * @throws IllegalStateException if no template is set
@@ -576,6 +719,7 @@ public final class MubanDocxEngine {
             return new MubanDocxEngine(
                     wordPackage, ctx, arrays,
                     formatMap != null ? formatMap : Collections.emptyMap(),
+                    richTextKeys != null ? richTextKeys : Collections.emptySet(),
                     locale, outputDir, outputFormat, assetDir,
                     pdfOptions, securityCallback, txtOptions, pngOptions);
         }
