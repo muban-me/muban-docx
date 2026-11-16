@@ -2,7 +2,6 @@ package me.muban.docx;
 
 import org.docx4j.wml.ContentAccessor;
 import org.docx4j.wml.P;
-import org.docx4j.wml.R;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,6 +98,12 @@ public final class DocxConditionalProcessor {
 
     /** Pattern to match {@code #{fi}} — the closing marker */
     static final Pattern FI_PATTERN = Pattern.compile("^\\s*#\\{\\s*fi\\s*}\\s*$");
+
+    /** Opening delimiter shared by every conditional marker. */
+    private static final String MARKER_OPEN = "#{";
+
+    /** Closing delimiter shared by every conditional marker. */
+    private static final String MARKER_CLOSE = "}";
 
     private DocxConditionalProcessor() {}
 
@@ -230,7 +235,7 @@ public final class DocxConditionalProcessor {
             return Marker.NONE;
         }
 
-        joinConditionalRuns(paragraph);
+        DocxRunUtils.joinSplitMarker(paragraph, MARKER_OPEN, MARKER_CLOSE);
         String text = DocxXmlUtils.extractAllText(List.of(paragraph)).trim();
 
         Matcher ifMatcher = IF_PATTERN.matcher(text);
@@ -449,57 +454,6 @@ public final class DocxConditionalProcessor {
         return true;
     }
 
-    /**
-     * Merge adjacent runs in a paragraph that together form a {@code #{...}} marker.
-     *
-     * <p>Word often splits {@code #{if expr}} across multiple runs due to spell-checking,
-     * proofing marks, or editing history. This method merges adjacent runs with identical
-     * formatting when they collectively contain {@code #} and {@code {}.
-     */
-    static void joinConditionalRuns(P paragraph) {
-        List<Object> content = paragraph.getContent();
-
-        int i = 0;
-        while (i < content.size()) {
-            Object unwrapped = DocxXmlUtils.unwrap(content.get(i));
-            if (!(unwrapped instanceof R run)) {
-                i++;
-                continue;
-            }
-
-            String text = DocxXmlUtils.getRunText(run);
-            if (!text.contains("#") && !text.contains("{")) {
-                i++;
-                continue;
-            }
-
-            StringBuilder accumulated = new StringBuilder(text);
-            int mergeEnd = i;
-
-            for (int j = i + 1; j < content.size(); j++) {
-                Object nextUnwrapped = DocxXmlUtils.unwrap(content.get(j));
-                if (!(nextUnwrapped instanceof R nextRun)) break;
-
-                if (!isCompatibleFormatting(run, nextRun)) break;
-
-                String nextText = DocxXmlUtils.getRunText(nextRun);
-                accumulated.append(nextText);
-                mergeEnd = j;
-
-                String acc = accumulated.toString();
-                if (acc.contains("#{") && acc.contains("}")) {
-                    DocxXmlUtils.setRunText(run, acc);
-                    for (int k = mergeEnd; k > i; k--) {
-                        content.remove(k);
-                    }
-                    break;
-                }
-            }
-
-            i++;
-        }
-    }
-
     // ==================== VARIABLE EXTRACTION ====================
 
     /**
@@ -530,7 +484,7 @@ public final class DocxConditionalProcessor {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
 
             if (unwrapped instanceof P paragraph) {
-                joinConditionalRuns(paragraph);
+                DocxRunUtils.joinSplitMarker(paragraph, MARKER_OPEN, MARKER_CLOSE);
                 String text = DocxXmlUtils.extractAllText(List.of(paragraph)).trim();
                 Matcher ifMatcher = IF_PATTERN.matcher(text);
                 if (ifMatcher.matches()) {
@@ -548,31 +502,6 @@ public final class DocxConditionalProcessor {
             if (unwrapped instanceof ContentAccessor accessor && !(unwrapped instanceof P)) {
                 collectConditionalVariables(accessor.getContent(), variables);
             }
-        }
-    }
-
-    /**
-     * Check if two runs have compatible formatting for merging.
-     * Compares serialized RPr XML for deep equality.
-     */
-    private static boolean isCompatibleFormatting(R run1, R run2) {
-        var rpr1 = run1.getRPr();
-        var rpr2 = run2.getRPr();
-
-        if (rpr1 == null && rpr2 == null) {
-            return true;
-        }
-        if (rpr1 == null || rpr2 == null) {
-            return false;
-        }
-
-        try {
-            String xml1 = org.docx4j.XmlUtils.marshaltoString(rpr1);
-            String xml2 = org.docx4j.XmlUtils.marshaltoString(rpr2);
-            return xml1.equals(xml2);
-        } catch (Exception e) {
-            log.debug("Could not compare RPr for run merging: {}", e.getMessage());
-            return false;
         }
     }
 }

@@ -32,6 +32,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   template uploads register the right parameters.
 - An `#{elseif}` placed after `#{else}` is ignored with a warning, and its body stays in the else
   branch. Duplicate `#{else}` markers are dropped the same way.
+- Run merging (markers split across Word runs) moved into a new package-private helper,
+  `DocxRunUtils`. The logic is unchanged and still marker-based; the processor now only deals with
+  block structure and branch selection.
 
 ## [1.6.0] — 2026-11-16
 

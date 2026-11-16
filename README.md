@@ -25,7 +25,7 @@ via docx4j + Apache FOP.
 
 ## Requirements
 
-- Java 17+
+- Java 21+
 - Maven 3.8+
 - PDF and PNG export require the optional `docx4j-export-fo` dependency on the classpath
 
@@ -388,14 +388,18 @@ String txtPath = MubanDocxEngine.builder()
 
 ```text
 MubanDocxEngine (facade)
- ├── DocxConditionalProcessor   #{if}/{else}/{fi} block processing
+ ├── DocxConditionalProcessor   #{if}/#{elseif}/#{else}/#{fi} blocks, nesting supported
  ├── DocxTableProcessor         table row replication + placeholder substitution
+ ├── DocxRichText               whitelisted HTML → Word runs for ${html:...}
  ├── DocxExpressionEvaluator    SpEL sandboxed evaluation
  ├── DocxImageReplacer          dynamic image replacement
+ ├── QrCodeEncoder              QR code rendering for qr: values
  ├── DocxTableStyleResolver     table style flattening for FO export
  ├── DocxContextBuilder         parameter + data merging
  ├── DocxExporter               DOCX save + PDF FO pipeline + PNG FOP pipeline + HTML XSLT pipeline + TXT extraction
+ ├── PngFoRenderer              page rasterisation for PNG export
  ├── DocxXmlUtils               low-level XML helpers
+ ├── DocxRunUtils               run re-joining (markers split by Word) + formatting comparison
  └── LocaleUtils                locale parsing + number/date formatting
 ```
 
