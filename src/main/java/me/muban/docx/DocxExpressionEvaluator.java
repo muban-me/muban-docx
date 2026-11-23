@@ -62,13 +62,47 @@ public class DocxExpressionEvaluator {
     private static final Pattern STRING_LITERAL_PATTERN =
             Pattern.compile("'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"");
 
+    /**
+     * SpEL variables that always exist and therefore need no declaration.
+     */
+    private static final Set<String> PREDEFINED_VARIABLES = Set.of("root", "this");
+
+    /**
+     * Pattern for a variable reference: {@code #name}, with the name captured up to the first dot so
+     * {@code #fmt.date(...)} checks {@code fmt} rather than {@code fmt.date}.
+     */
+    private static final Pattern VARIABLE_REFERENCE_PATTERN =
+            Pattern.compile("#([a-zA-Z_][a-zA-Z0-9_]*)");
+
     private DocxExpressionEvaluator() {}
+
+    /**
+     * Sentinel returned by {@link #evaluateRaw} when an expression cannot be evaluated.
+     *
+     * <p>Distinguishes a genuine {@code null} result (which is a valid value and may be bound to a
+     * template variable) from a failure (which must leave the variable undefined).
+     */
+    static final Object UNRESOLVED = new Object();
+
+    /**
+     * Outcome of an expression evaluation: either a value (possibly {@code null}) or a failure.
+     */
+    private record Result(boolean resolved, Object value) {
+
+        static Result of(Object value) {
+            return new Result(true, value);
+        }
+
+        static Result failure() {
+            return new Result(false, null);
+        }
+    }
 
     /**
      * Check whether a placeholder body is an expression (contains operators, method calls, etc.)
      * or a simple dotted key like {@code customer_name} or {@code address.city}.
      *
-     * @param placeholderBody the text between {@code ${} and {@code }}
+     * @param placeholderBody the text between {@code ${} and {@code }} 
      * @return true if the body contains expression syntax beyond a simple key
      */
     public static boolean isExpression(String placeholderBody) {
@@ -87,24 +121,113 @@ public class DocxExpressionEvaluator {
      * @return the formatted result, or {@code "${expression}"} on failure
      */
     public static String evaluate(String expression, Map<String, Object> rawContext, Locale locale) {
-        if (rawContext == null) {
-            rawContext = Collections.emptyMap();
+        return evaluate(expression, rawContext, locale, Collections.emptyMap());
+    }
+
+    /**
+     * Evaluate a SpEL expression with additional variables reachable through the {@code #} prefix.
+     *
+     * <p>Variables are how the engine exposes helpers to templates without weakening the sandbox:
+     * the document locale's {@link DocxFormatHelper} is available as {@code #fmt}, so a template can
+     * write {@code ${#fmt.date(document_date, 'dd.MM.yyyy')}} even though static method calls are
+     * forbidden.
+     *
+     * @param expression the expression to evaluate (without {@code ${} / {@code }} delimiters)
+     * @param rawContext  the context map — variables are accessible as properties
+     * @param locale     optional locale for number formatting, or null
+     * @param variables  extra variables exposed as {@code #name}; may be {@code null}
+     * @return the formatted result, or {@code "${expression}"} on failure
+     */
+    public static String evaluate(String expression, Map<String, Object> rawContext, Locale locale,
+                                  Map<String, Object> variables) {
+        Result result = evaluateInternal(expression, rawContext, locale, variables);
+        if (!result.resolved()) {
+            return "${" + expression + "}";
         }
+        if (result.value() == null) {
+            return "";
+        }
+        return LocaleUtils.formatValue(result.value(), locale);
+    }
+
+    /**
+     * Evaluate a SpEL expression and return the raw value, without locale formatting.
+     *
+     * <p>Used by template variable declarations ({@code #{let name = expression}}), which must keep
+     * the original type so that later expressions can still format it — a number has to stay a
+     * number for {@code #fmt.number(...)} to work on the variable.
+     *
+     * @param expression the expression to evaluate
+     * @param rawContext  the context map
+     * @param locale     optional locale, or null
+     * @param variables  extra variables exposed as {@code #name}; may be {@code null}
+     * @return the raw result, or {@link #UNRESOLVED} when evaluation fails
+     */
+    static Object evaluateRaw(String expression, Map<String, Object> rawContext, Locale locale,
+                              Map<String, Object> variables) {
+        Result result = evaluateInternal(expression, rawContext, locale, variables);
+        return result.resolved() ? result.value() : UNRESOLVED;
+    }
+
+    private static Result evaluateInternal(String expression, Map<String, Object> rawContext,
+                                           Locale locale, Map<String, Object> variables) {
+        Map<String, Object> context = rawContext != null ? rawContext : Collections.emptyMap();
+
+        // A missing SpEL variable evaluates to null instead of failing, which would silently turn a
+        // typo into an empty string in a legal document. Reject unknown variables up front so the
+        // placeholder stays visible, exactly like a missing input field.
+        String unknownVariable = findUnknownVariable(expression, variables);
+        if (unknownVariable != null) {
+            log.warn("Unknown template variable '#{}' in expression '{}' — placeholder left visible",
+                    unknownVariable, expression);
+            return Result.failure();
+        }
+
         try {
             EvaluationContext evalContext = SimpleEvaluationContext
                     .forPropertyAccessors(new MapAccessor())
                     .withInstanceMethods()
                     .build();
-            Expression spelExpression = PARSER.parseExpression(expression);
-            Object result = spelExpression.getValue(evalContext, rawContext);
-            if (result == null) {
-                return "";
+            if (variables != null) {
+                variables.forEach(evalContext::setVariable);
             }
-            return LocaleUtils.formatValue(result, locale);
+            Expression spelExpression = PARSER.parseExpression(expression);
+            return Result.of(spelExpression.getValue(evalContext, context));
         } catch (Exception e) {
             log.warn("SpEL expression evaluation failed for '{}': {}", expression, e.getMessage());
-            return "${" + expression + "}";
+            return Result.failure();
         }
+    }
+
+    /**
+     * Find the first {@code #variable} in an expression that is neither predefined nor registered.
+     *
+     * <p>String literals are blanked out first, so {@code '#'} inside a literal is not mistaken for
+     * a reference. The captured name stops at the first dot, because {@code #fmt.date(...)} refers
+     * to the {@code fmt} variable.
+     *
+     * @param expression the expression to scan
+     * @param variables  the variables available to the expression; may be {@code null}
+     * @return the first unknown variable name, or {@code null} when every reference is known
+     */
+    static String findUnknownVariable(String expression, Map<String, Object> variables) {
+        if (expression == null || expression.indexOf('#') < 0) {
+            return null;
+        }
+
+        String stripped = STRING_LITERAL_PATTERN.matcher(expression).replaceAll(" ");
+        Matcher matcher = VARIABLE_REFERENCE_PATTERN.matcher(stripped);
+
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            if (PREDEFINED_VARIABLES.contains(name)) {
+                continue;
+            }
+            if (variables == null || !variables.containsKey(name)) {
+                return name;
+            }
+        }
+        return null;
     }
 
     /**
@@ -125,6 +248,8 @@ public class DocxExpressionEvaluator {
      *       relies on other occurrences of {@code name} in the template)</li>
      *   <li>{@code "price * quantity"} → {@code ["price", "quantity"]}</li>
      *   <li>{@code "gender == 'F' ? 'a.png' : 'b.png'"} → {@code ["gender"]}</li>
+     *   <li>{@code "#salutation"} → {@code []} (a {@code #}-prefixed name is a template-internal
+     *       variable, not an input field)</li>
      * </ul>
      *
      * <p><b>Method calls are skipped entirely</b> — {@code items.size()} does not extract
@@ -149,6 +274,12 @@ public class DocxExpressionEvaluator {
         while (matcher.find()) {
             String token = matcher.group();
             int end = matcher.end();
+
+            // A '#'-prefixed identifier is a template-internal SpEL variable (#fmt, #salutation),
+            // never an input field — skip it so template discovery stays a pure contract view.
+            if (matcher.start() > 0 && stripped.charAt(matcher.start() - 1) == '#') {
+                continue;
+            }
 
             // Skip method calls entirely: identifier immediately followed by '('
             // e.g., "items.size()" or "name.toUpperCase()" — the object part is NOT

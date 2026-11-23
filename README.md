@@ -9,6 +9,8 @@ via docx4j + Apache FOP.
 | Feature | Description |
 | --- | --- |
 | **SpEL expressions** | `${name}`, `${price * qty}`, `${price > 1000 ? 'Premium' : 'Standard'}` — powered by Spring Expression Language with a sandboxed evaluator |
+| **Template variables** | `#{let name = expr}` declarations, referenced as `${#name}` and in `#{if}` conditions — the DOCX counterpart of JasperReports report variables |
+| **Formatting helper** | `#fmt.date` and `#fmt.number` — date and number patterns live in the template instead of the input data |
 | **Rich text values** | `${html:footer}` renders a whitelisted HTML subset (`<br>`, `<b>`, `<i>`, `<u>`, `<sup>`, `<sub>`, entities) as Word runs — for HTML fragments coming from a CMS or rules engine |
 | **Conditional blocks** | `#{if expr}` / `#{elseif expr}` / `#{else}` / `#{fi}` — paragraph-level branches with boolean coercion, nesting supported |
 | **Table row replication** | Automatically clone template rows for array data (`${items.name}`) |
@@ -91,6 +93,9 @@ Format patterns follow `DecimalFormat` syntax for numbers and `DateTimeFormatter
 syntax for temporal values. They are applied only to simple key placeholders
 (e.g. `${amount}`), not to SpEL expressions.
 
+> For new templates prefer `#fmt` (see *Formatting in templates*) — the pattern then lives in the
+> document, applies inside expressions as well, and needs no wiring in the request.
+
 ### In-memory processing (no export)
 
 ```java
@@ -127,6 +132,109 @@ SpEL expressions are fully supported:
 ${price > 1000 ? 'Premium' : 'Standard'}
 ${name.toUpperCase()}
 ${items.size()}
+```
+
+### Formatting in templates (`#fmt`)
+
+Date and number patterns belong to the template, not to the data. The engine injects a
+locale-bound helper into the SpEL context as `#fmt`, so the pattern is written where the value
+is rendered:
+
+```text
+Termin płatności: ${#fmt.date(due_date, 'd MMMM yyyy')}.
+Kwota: ${#fmt.number(debt_total_amount, '#,##0.00')} zł.
+```
+
+| Call | Result (pl-PL) |
+| --- | --- |
+| `${#fmt.date(d, 'dd.MM.yyyy')}` | `23.11.2026` |
+| `${#fmt.date(d, 'd MMMM yyyy')}` | `23 listopada 2026` — genitive, used inside a date |
+| `${#fmt.date(d, 'LLLL yyyy')}` | `listopad 2026` — stand-alone nominative |
+| `${#fmt.number(n, '#,##0.00')}` | `1 234,50` |
+
+- The input may be a `LocalDate` / `LocalDateTime`, a `java.util.Date`, or a string. ISO-8601 is
+  the expected string form; `dd.MM.yyyy`, `dd-MM-yyyy`, `dd/MM/yyyy` and `yyyy-MM-dd HH:mm[:ss]`
+  are accepted for legacy data.
+- `#fmt.date(value)` and `#fmt.number(value)` default to `dd.MM.yyyy` and `#,##0.00`.
+- A value that cannot be parsed is printed unchanged and logged, so the problem is visible in the
+  document instead of turning into a blank cell.
+- Works anywhere an expression works — including branch conditions and replicated table rows.
+
+Why a helper and not a static call? The evaluator sandbox forbids `T(...)` and constructors, so a
+template cannot build its own formatter:
+`T(java.time.format.DateTimeFormatter).ofPattern(...)` fails with `EL1005E`.
+
+**Scope.** `#fmt` is deliberately domain-neutral: it knows patterns and locales, not business
+vocabulary. Anything that needs a dictionary — amounts in words, month names in the locative case,
+declension of nouns or forms of address — stays out of the library. Wording that depends on a data
+value is written as an ordinary expression, which also keeps the text visible next to its context:
+
+```text
+dłużnik ${addressee_gender == 'F' ? 'opłaciła' : 'opłacił'} należność
+#{let salutation = addressee_gender == 'M' ? 'Szanowny Panie,' : (addressee_gender == 'F' ? 'Szanowna Pani,' : 'Szanowni Państwo,')}
+```
+
+This covers words whose form depends **only** on the value — past-tense verbs, adjectives,
+pronouns, forms of address. Declension of nouns (a job title in the accusative, for example) is
+lexical and must come from the data.
+
+### Template variables (`#{let}`)
+
+A declaration computes a value once and reuses it. Declarations are paragraphs of their own, like
+conditional markers, and are removed from the output:
+
+```text
+#{let salutation = addressee_gender == 'M' ? 'Szanowny Panie,' : (addressee_gender == 'F' ? 'Szanowna Pani,' : 'Szanowni Państwo,')}
+#{let due_long = #fmt.date(debt_payment_date, 'd MMMM yyyy')}
+#{let demand = 'w kwocie ' + #fmt.number(debt_total_amount, '#,##0.00') + ' zł'}
+```
+
+```text
+${#salutation}
+Termin upływa ${#due_long}. Wzywamy do zapłaty ${#demand}.
+```
+
+Declared names live in the **SpEL variable namespace**, so they are always referenced with a `#`:
+`${#salutation}` in text, `#{if #salutation == ...}` in conditions. That makes the template's
+contract readable — by a person and by tooling — without knowing anything about `#{let}`:
+
+| Syntax | Meaning |
+| --- | --- |
+| `${case_number}` | input data supplied by the caller |
+| `${#salutation}`, `${#fmt.date(...)}` | computed inside the template |
+| `#{if ...}` / `#{let ...}` / `#{fi}` | directives, not values |
+
+Rules:
+
+- **Document order.** A declaration may use the ones before it — with `#`, so
+  `#{let total = #net + #vat}`. A forward reference fails and leaves the variable undefined,
+  so there are no cycles to detect.
+- **Scope.** The body and headers/footers share one namespace.
+- **Raw value.** The evaluated object is stored as-is — a number stays a number — so
+  `#fmt.number(#total, ...)` can format it later and `${#total}` formats it at output time.
+- **Separate namespace.** A declaration cannot shadow input data: `${name}` reads the data,
+  `${#name}` reads the declaration, and neither ever sees the other.
+- **Reserved names.** `root` and `this` belong to the SpEL runtime and `fmt` to the engine; a
+  declaration using one of them is ignored with a warning.
+- **Failure is loud.** An expression that cannot be evaluated, or a reference to an undeclared
+  `#variable`, leaves `${...}` visible in the output instead of rendering an empty string.
+- **Not inside replicated table rows.** Declarations are resolved before row replication, so a
+  declaration placed in a template row would run once. Use an expression in the row instead.
+
+Because declarations are resolved before conditional blocks, `#{let}` cannot be assigned
+conditionally — a declaration inside an `#{if}` block would run unconditionally. Use a ternary
+inside the declaration:
+
+```text
+#{let debtor_noun = addressee_gender == 'F' ? 'dłużniczka' : 'dłużnik'}
+```
+
+Declarations can be listed without rendering, which is useful for validating a template or for
+diagnosing why a `${#name}` stayed unresolved:
+
+```java
+Map<String, String> declared = MubanDocxEngine.extractDeclaredVariables(wordPackage);
+// {salutation=addressee_gender == 'M' ? ... , due_long=#fmt.date(debt_payment_date, 'd MMMM yyyy'), ...}
 ```
 
 ### Rich text values
@@ -211,6 +319,10 @@ For a table bound to an array, use `${arrayName.field}` in template rows:
 | `${items.name}` | `${items.price}` |
 
 The engine detects the array binding and replicates the row for each element.
+
+A row is recognised by any reference to `<arrayName>.<field>`, so placeholders may be wrapped in
+expressions — `${#fmt.date(items.due_date, 'dd.MM.yyyy')}` still replicates the row and formats each
+clone with its own value.
 
 ### Dynamic images
 

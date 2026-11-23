@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -138,11 +139,30 @@ public final class DocxImageReplacer {
                                      Map<String, Object> rawContext,
                                      File cacheDir,
                                      Locale locale) {
+        return replaceImages(wordPackage, rawContext, cacheDir, locale, Collections.emptyMap());
+    }
+
+    /**
+     * Replace placeholder images, with extra variables reachable through the {@code #} prefix.
+     *
+     * @param wordPackage the loaded DOCX document
+     * @param rawContext  raw context map (parameters + data) for image value lookup
+     * @param cacheDir    template cache directory (extracted ZIP root) for asset resolution
+     * @param locale      optional locale for SpEL expression evaluation, or null
+     * @param variables   extra variables exposed as {@code #name}; may be {@code null}
+     * @return the number of images successfully replaced
+     */
+    public static int replaceImages(WordprocessingMLPackage wordPackage,
+                                     Map<String, Object> rawContext,
+                                     File cacheDir,
+                                     Locale locale,
+                                     Map<String, Object> variables) {
         int replacedCount = 0;
         MainDocumentPart mainPart = wordPackage.getMainDocumentPart();
 
         // Process main document body
-        replacedCount += processImagesInContent(mainPart.getContent(), mainPart, rawContext, cacheDir, locale);
+        replacedCount += processImagesInContent(
+                mainPart.getContent(), mainPart, rawContext, cacheDir, locale, variables);
 
         // Process headers and footers
         try {
@@ -150,12 +170,12 @@ public final class DocxImageReplacer {
                 for (var section : wordPackage.getDocumentModel().getSections()) {
                     var hfp = section.getHeaderFooterPolicy();
                     if (hfp == null) continue;
-                    replacedCount += processHeaderFooterImages(hfp.getDefaultHeader(), rawContext, cacheDir, locale);
-                    replacedCount += processHeaderFooterImages(hfp.getDefaultFooter(), rawContext, cacheDir, locale);
-                    replacedCount += processHeaderFooterImages(hfp.getFirstHeader(), rawContext, cacheDir, locale);
-                    replacedCount += processHeaderFooterImages(hfp.getFirstFooter(), rawContext, cacheDir, locale);
-                    replacedCount += processHeaderFooterImages(hfp.getEvenHeader(), rawContext, cacheDir, locale);
-                    replacedCount += processHeaderFooterImages(hfp.getEvenFooter(), rawContext, cacheDir, locale);
+                    replacedCount += processHeaderFooterImages(hfp.getDefaultHeader(), rawContext, cacheDir, locale, variables);
+                    replacedCount += processHeaderFooterImages(hfp.getDefaultFooter(), rawContext, cacheDir, locale, variables);
+                    replacedCount += processHeaderFooterImages(hfp.getFirstHeader(), rawContext, cacheDir, locale, variables);
+                    replacedCount += processHeaderFooterImages(hfp.getFirstFooter(), rawContext, cacheDir, locale, variables);
+                    replacedCount += processHeaderFooterImages(hfp.getEvenHeader(), rawContext, cacheDir, locale, variables);
+                    replacedCount += processHeaderFooterImages(hfp.getEvenFooter(), rawContext, cacheDir, locale, variables);
                 }
             }
         } catch (Exception e) {
@@ -342,14 +362,16 @@ public final class DocxImageReplacer {
 
     private static int processHeaderFooterImages(Object headerOrFooterPart,
                                                   Map<String, Object> rawContext, File cacheDir,
-                                                  Locale locale) {
+                                                  Locale locale,
+                                                  Map<String, Object> variables) {
         if (headerOrFooterPart == null) return 0;
 
         if (headerOrFooterPart instanceof JaxbXmlPart<?> part) {
             try {
                 Object jaxbContent = part.getContents();
                 if (jaxbContent instanceof ContentAccessor contentAccessor) {
-                    return processImagesInContent(contentAccessor.getContent(), part, rawContext, cacheDir, locale);
+                    return processImagesInContent(
+                            contentAccessor.getContent(), part, rawContext, cacheDir, locale, variables);
                 }
             } catch (Exception e) {
                 log.debug("Error processing header/footer images: {}", e.getMessage());
@@ -360,15 +382,17 @@ public final class DocxImageReplacer {
 
     private static int processImagesInContent(List<Object> content, Part owningPart,
                                                Map<String, Object> rawContext, File cacheDir,
-                                               Locale locale) {
+                                               Locale locale,
+                                               Map<String, Object> variables) {
         int count = 0;
         for (Object obj : content) {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
 
             if (unwrapped instanceof R run) {
-                count += processImagesInRun(run, owningPart, rawContext, cacheDir, locale);
+                count += processImagesInRun(run, owningPart, rawContext, cacheDir, locale, variables);
             } else if (unwrapped instanceof ContentAccessor contentAccessor) {
-                count += processImagesInContent(contentAccessor.getContent(), owningPart, rawContext, cacheDir, locale);
+                count += processImagesInContent(
+                        contentAccessor.getContent(), owningPart, rawContext, cacheDir, locale, variables);
             }
         }
         return count;
@@ -376,7 +400,8 @@ public final class DocxImageReplacer {
 
     private static int processImagesInRun(R run, Part owningPart,
                                            Map<String, Object> rawContext, File cacheDir,
-                                           Locale locale) {
+                                           Locale locale,
+                                           Map<String, Object> variables) {
         int count = 0;
         for (Object obj : run.getContent()) {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
@@ -409,7 +434,7 @@ public final class DocxImageReplacer {
 
                 byte[] imageBytes;
                 if (imageKey.contains("${")) {
-                    String evaluated = evaluateImageExpression(imageKey, rawContext, locale);
+                    String evaluated = evaluateImageExpression(imageKey, rawContext, locale, variables);
                     if (evaluated == null || evaluated.isEmpty() || evaluated.contains("${")) {
                         log.debug("SpEL evaluation produced no usable result for '{}', keeping original", imageKey);
                         continue;
@@ -438,12 +463,20 @@ public final class DocxImageReplacer {
      * Evaluate SpEL expressions in an image key.
      */
     static String evaluateImageExpression(String imageKey, Map<String, Object> rawContext, Locale locale) {
+        return evaluateImageExpression(imageKey, rawContext, locale, Collections.emptyMap());
+    }
+
+    /**
+     * Evaluate SpEL expressions in an image key, with extra {@code #name} variables.
+     */
+    static String evaluateImageExpression(String imageKey, Map<String, Object> rawContext, Locale locale,
+                                          Map<String, Object> variables) {
         Matcher matcher = SPEL_PATTERN.matcher(imageKey);
         StringBuilder result = new StringBuilder();
 
         while (matcher.find()) {
             String expression = matcher.group(1);
-            String evaluated = DocxExpressionEvaluator.evaluate(expression, rawContext, locale);
+            String evaluated = DocxExpressionEvaluator.evaluate(expression, rawContext, locale, variables);
             matcher.appendReplacement(result, Matcher.quoteReplacement(evaluated));
         }
         matcher.appendTail(result);

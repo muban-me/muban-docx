@@ -7,6 +7,55 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-11-23
+
+### Added
+
+- **Formatting helper `#fmt`.** The engine injects a locale-bound `DocxFormatHelper` into the SpEL
+  context as the `#fmt` variable, so presentation patterns can live in the template:
+  `${#fmt.date(document_date, 'd MMMM yyyy')}`, `${#fmt.number(amount, '#,##0.00')}`. The input may
+  be a `TemporalAccessor`, a `java.util.Date`, or a string (ISO-8601 plus a few legacy shapes); a
+  value that cannot be parsed is printed unchanged and logged. The helper exists because the
+  sandbox forbids `T(...)` and constructors, so a template could not build a `DateTimeFormatter`.
+- **Template variables `#{let name = expression}`.** Declarations in their own paragraphs, resolved
+  sequentially in document order before conditional blocks, then removed from the output. Declared
+  names live in the **SpEL variable namespace**, so they are referenced as `${#name}` in text and
+  `#{if #name ...}` in conditions; the unprefixed namespace stays reserved for input data. Values
+  keep their raw type (a number stays a number). `root` and `this` are reserved by SpEL and `fmt`
+  by the engine — declarations using those names are ignored with a warning.
+- **Unknown-variable pre-flight.** A `${#name}` (or a condition) that references a variable which
+  is neither declared nor provided by the engine now leaves the placeholder visible and logs a
+  warning. Without it, SpEL would resolve a missing variable to `null` and the template would
+  silently print an empty string — unacceptable for legal correspondence.
+- **`MubanDocxEngine.extractDeclaredVariables(WordprocessingMLPackage)`.** Lists declarations from
+  the body and headers/footers without rendering, for template validation and for deriving which
+  input fields a template depends on.
+- Overloads carrying SpEL variables through the processing steps:
+  `DocxExpressionEvaluator.evaluate(…, Map variables)`, `DocxConditionalProcessor.processConditionals(…)`,
+  `DocxTableProcessor.processTable(…)`, `DocxImageReplacer.replaceImages(…)`. The previous
+  signatures are kept and delegate with an empty variable map.
+
+### Changed
+
+- **Array-bound table rows are detected by the `<arrayKey>.<field>` reference instead of the literal
+  `${arrayKey.field}` placeholder.** Previously a row whose placeholder was wrapped in an
+  expression — for example `${#fmt.date(items.due_date, 'dd.MM.yyyy')}` — was not recognised as
+  belonging to the array, was handled as a scalar row, and the placeholder stayed unresolved.
+- `MubanDocxEngine` now resolves declarations into the SpEL variable namespace instead of writing
+  them into the document context, so `${name}` and `${#name}` can never collide.
+- `DocxExpressionEvaluator.extractVariableReferences` no longer reports `#`-prefixed identifiers:
+  `#fmt` and `#salutation` are template internals, not input fields, so template discovery stays a
+  pure view of the contract. The helper's arguments are still reported
+  (`#fmt.date(document_date, ...)` → `document_date`).
+- `LocaleUtils.parseLocale` builds locales with `Locale.of(...)` instead of the deprecated `Locale`
+  constructors. Behaviour is unchanged — including the rejection of a fourth segment — and the
+  module now compiles without deprecation warnings on Java 21.
+
+### Documentation
+
+- README: new sections *Formatting in templates (`#fmt`)* and *Template variables (`#{let}`)*, plus
+  a note that `#fmt` is the preferred replacement for the request-side format map.
+
 ## [1.7.0] — 2026-11-16
 
 ### Added

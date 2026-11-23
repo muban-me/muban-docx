@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -133,6 +134,25 @@ public final class DocxConditionalProcessor {
     public static int processConditionals(List<Object> content,
                                            Map<String, Object> rawContext,
                                            Locale locale) {
+        return processConditionals(content, rawContext, locale, Collections.emptyMap());
+    }
+
+    /**
+     * Process conditional blocks, with extra variables reachable through the {@code #} prefix.
+     *
+     * <p>The engine uses this overload to expose its helpers, so a branch condition may format a
+     * value: {@code #{if #fmt.date(due_date, 'yyyy') == '2026'}}.
+     *
+     * @param content    the mutable content list (e.g., body content, cell content)
+     * @param rawContext the evaluation context for SpEL expressions
+     * @param locale     optional locale for expression evaluation
+     * @param variables  extra variables exposed as {@code #name}; may be {@code null}
+     * @return the number of conditional blocks processed
+     */
+    public static int processConditionals(List<Object> content,
+                                           Map<String, Object> rawContext,
+                                           Locale locale,
+                                           Map<String, Object> variables) {
         int blocksProcessed = 0;
 
         int i = 0;
@@ -150,7 +170,7 @@ public final class DocxConditionalProcessor {
                     continue;
                 }
 
-                int branch = applyBlock(content, block, rawContext, locale);
+                int branch = applyBlock(content, block, rawContext, locale, variables);
                 log.debug("Conditional block #{{if {}}} resolved to branch {}",
                         marker.expression(), branch);
 
@@ -171,7 +191,7 @@ public final class DocxConditionalProcessor {
 
             // Recurse into nested content (table cells, etc.)
             if (obj instanceof ContentAccessor accessor && !(obj instanceof P)) {
-                blocksProcessed += processConditionals(accessor.getContent(), rawContext, locale);
+                blocksProcessed += processConditionals(accessor.getContent(), rawContext, locale, variables);
             }
 
             i++;
@@ -318,7 +338,8 @@ public final class DocxConditionalProcessor {
      *         matched (the whole block is then removed)
      */
     private static int applyBlock(List<Object> content, Block block,
-                                  Map<String, Object> rawContext, Locale locale) {
+                                  Map<String, Object> rawContext, Locale locale,
+                                  Map<String, Object> variables) {
         int chosen = -1;
 
         for (int k = 0; k < block.branches.size(); k++) {
@@ -327,7 +348,7 @@ public final class DocxConditionalProcessor {
                 chosen = k;  // #{else} always matches
                 break;
             }
-            if (evaluateCondition(branch.expression, rawContext, locale)) {
+            if (evaluateCondition(branch.expression, rawContext, locale, variables)) {
                 chosen = k;
                 break;
             }
@@ -411,7 +432,21 @@ public final class DocxConditionalProcessor {
      * Evaluate a SpEL expression and coerce the result to boolean.
      */
     static boolean evaluateCondition(String expression, Map<String, Object> rawContext, Locale locale) {
-        String result = DocxExpressionEvaluator.evaluate(expression, rawContext, locale);
+        return evaluateCondition(expression, rawContext, locale, Collections.emptyMap());
+    }
+
+    /**
+     * Evaluate a SpEL expression with extra variables and coerce the result to boolean.
+     *
+     * @param expression the condition
+     * @param rawContext the evaluation context
+     * @param locale     optional locale, or null
+     * @param variables  extra variables exposed as {@code #name}; may be {@code null}
+     * @return the coerced condition value
+     */
+    static boolean evaluateCondition(String expression, Map<String, Object> rawContext, Locale locale,
+                                     Map<String, Object> variables) {
+        String result = DocxExpressionEvaluator.evaluate(expression, rawContext, locale, variables);
 
         if (result.startsWith("${") && result.endsWith("}")) {
             log.warn("Conditional expression '{}' evaluation failed, treating as false", expression);
