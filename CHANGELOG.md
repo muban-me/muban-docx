@@ -7,6 +7,43 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-11-23
+
+### Added
+
+- **Formatting helper `#fmt`.** The engine injects a locale-bound `DocxFormatHelper` into the SpEL
+  context as the `#fmt` variable, so presentation patterns can live in the template:
+  `${#fmt.date(document_date, 'd MMMM yyyy')}`, `${#fmt.number(amount, '#,##0.00')}`. The input may
+  be a `TemporalAccessor`, a `java.util.Date`, or a string (ISO-8601 plus a few legacy shapes); a
+  value that cannot be parsed is printed unchanged and logged. The helper exists because the
+  sandbox forbids `T(...)` and constructors, so a template could not build a `DateTimeFormatter`.
+- **Template variables `#{let name = expression}`.** Declarations in their own paragraphs, resolved
+  sequentially in document order before conditional blocks, then removed from the output. Declared
+  names are ordinary context entries, so they work in `${name}` and in `#{if}` conditions, and keep
+  their raw type (a number stays a number). A failing expression leaves the variable undefined —
+  the placeholder stays visible — and logs a warning; shadowing an input field is allowed but logged.
+- **`MubanDocxEngine.extractDeclaredVariables(WordprocessingMLPackage)`.** Lists declarations from
+  the body and headers/footers without rendering, for template validation and for deriving which
+  input fields a template depends on.
+- Overloads carrying SpEL variables through the processing steps:
+  `DocxExpressionEvaluator.evaluate(…, Map variables)`, `DocxConditionalProcessor.processConditionals(…)`,
+  `DocxTableProcessor.processTable(…)`, `DocxImageReplacer.replaceImages(…)`. The previous
+  signatures are kept and delegate with an empty variable map.
+
+### Changed
+
+- **Array-bound table rows are detected by the `<arrayKey>.<field>` reference instead of the literal
+  `${arrayKey.field}` placeholder.** Previously a row whose placeholder was wrapped in an
+  expression — for example `${#fmt.date(items.due_date, 'dd.MM.yyyy')}` — was not recognised as
+  belonging to the array, was handled as a scalar row, and the placeholder stayed unresolved.
+- `MubanDocxEngine` now works on a mutable copy of the context map, because `#{let}` declarations
+  are written into it during processing.
+
+### Documentation
+
+- README: new sections *Formatting in templates (`#fmt`)* and *Template variables (`#{let}`)*, plus
+  a note that `#fmt` is the preferred replacement for the request-side format map.
+
 ## [1.7.0] — 2026-11-16
 
 ### Added

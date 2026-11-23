@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -32,9 +33,6 @@ public class DocxTableProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(DocxTableProcessor.class);
 
-    /** Pattern to detect array-bound placeholders like ${items.name} — captures array key (group 1) */
-    private static final Pattern ARRAY_PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{(\\w+)\\.(\\w+)}");
-
     /** Pattern to match ${placeholder} expressions */
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
 
@@ -60,6 +58,27 @@ public class DocxTableProcessor {
                                      Map<String, Object> rawContext,
                                      Map<String, List<Map<String, Object>>> dataArrays, Locale locale,
                                      ContentProcessor contentProcessor) {
+        processTable(table, rawContext, dataArrays, locale, Collections.emptyMap(), contentProcessor);
+    }
+
+    /**
+     * Process a table with extra variables reachable through the {@code #} prefix.
+     *
+     * <p>Lets array rows use the engine helpers, for example
+     * {@code ${#fmt.date(installments.due_date, 'dd.MM.yyyy')}}.
+     *
+     * @param table            the docx4j table element
+     * @param rawContext       raw typed context for SpEL expression evaluation
+     * @param dataArrays       array data for table row replication (arrayKey → list of row maps)
+     * @param locale           optional locale for number formatting in array rows, or null
+     * @param variables        extra variables exposed as {@code #name}; may be {@code null}
+     * @param contentProcessor callback to process content elements (paragraphs, nested tables)
+     */
+    public static void processTable(Tbl table,
+                                     Map<String, Object> rawContext,
+                                     Map<String, List<Map<String, Object>>> dataArrays, Locale locale,
+                                     Map<String, Object> variables,
+                                     ContentProcessor contentProcessor) {
         // Work on a snapshot of the content list to safely modify it during iteration
         List<Object> rows = new ArrayList<>(table.getContent());
 
@@ -75,7 +94,7 @@ public class DocxTableProcessor {
 
             if (arrayKey != null) {
                 // This row is a template row bound to a data array — replicate it
-                replicateRow(table, rowObj, tr, arrayKey, dataArrays.get(arrayKey), locale, rawContext);
+                replicateRow(table, rowObj, tr, arrayKey, dataArrays.get(arrayKey), locale, rawContext, variables);
             } else {
                 // Regular row — perform scalar placeholder replacement
                 for (Object cell : tr.getContent()) {
@@ -91,22 +110,30 @@ public class DocxTableProcessor {
     /**
      * Detect whether a row's text contains array-bound placeholders.
      *
-     * <p>An array-bound placeholder has the form ${arrayKey.fieldName} where arrayKey
-     * matches a key in the data arrays map. Returns the array key if found, null otherwise.
+     * <p>A row belongs to a data array when its text references {@code <arrayKey>.<field>} for one
+     * of the known array keys. Detection deliberately does not require the bare
+     * {@code ${arrayKey.field}} form: a template may wrap the field in an expression, for example
+     * {@code ${#fmt.date(installments.due_date, 'dd.MM.yyyy')}}, and the row still has to be
+     * replicated. When a row references several arrays, the one appearing first in the text wins.
+     *
+     * <p>Returns the array key if found, null otherwise.
      */
     static String detectArrayBinding(String rowText, Map<String, List<Map<String, Object>>> dataArrays) {
         if (dataArrays == null || dataArrays.isEmpty()) {
             return null;
         }
 
-        Matcher matcher = ARRAY_PLACEHOLDER_PATTERN.matcher(rowText);
-        while (matcher.find()) {
-            String candidateKey = matcher.group(1);
-            if (dataArrays.containsKey(candidateKey)) {
-                return candidateKey;
+        String detected = null;
+        int detectedIndex = Integer.MAX_VALUE;
+
+        for (String arrayKey : dataArrays.keySet()) {
+            int index = rowText.indexOf(arrayKey + ".");
+            if (index >= 0 && index < detectedIndex) {
+                detected = arrayKey;
+                detectedIndex = index;
             }
         }
-        return null;
+        return detected;
     }
 
     /**
@@ -120,7 +147,8 @@ public class DocxTableProcessor {
      */
     private static void replicateRow(Tbl table, Object originalRowObj, Tr templateRow,
                                       String arrayKey, List<Map<String, Object>> items,
-                                      Locale locale, Map<String, Object> globalRawContext) {
+                                      Locale locale, Map<String, Object> globalRawContext,
+                                      Map<String, Object> variables) {
         int insertIndex = table.getContent().indexOf(originalRowObj);
 
         if (items == null || items.isEmpty()) {
@@ -149,7 +177,7 @@ public class DocxTableProcessor {
                     for (Object cellContent : tc.getContent()) {
                         Object unwrappedContent = DocxXmlUtils.unwrap(cellContent);
                         if (unwrappedContent instanceof P paragraph) {
-                            replaceParagraphPlaceholders(paragraph, rowRawContext, locale);
+                            replaceParagraphPlaceholders(paragraph, rowRawContext, locale, variables);
                         }
                     }
                 }
@@ -170,7 +198,8 @@ public class DocxTableProcessor {
      * All placeholders are evaluated via SpEL against the row-scoped raw context.
      */
     private static void replaceParagraphPlaceholders(P paragraph,
-                                                      Map<String, Object> rawContext, Locale locale) {
+                                                      Map<String, Object> rawContext, Locale locale,
+                                                      Map<String, Object> variables) {
         for (Object obj : paragraph.getContent()) {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
             if (!(unwrapped instanceof R run)) continue;
@@ -182,7 +211,7 @@ public class DocxTableProcessor {
             StringBuilder result = new StringBuilder();
             while (matcher.find()) {
                 String body = matcher.group(1).trim();
-                String replacement = DocxExpressionEvaluator.evaluate(body, rawContext, locale);
+                String replacement = DocxExpressionEvaluator.evaluate(body, rawContext, locale, variables);
                 matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
             }
             matcher.appendTail(result);

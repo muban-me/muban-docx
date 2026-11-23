@@ -14,10 +14,12 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -86,8 +88,18 @@ public final class MubanDocxEngine {
      */
     public static final String RICH_TEXT_PREFIX = "html:";
 
+    /**
+     * Name of the SpEL variable that exposes {@link DocxFormatHelper} to templates.
+     *
+     * <p>Templates reach it through the {@code #} prefix — {@code ${#fmt.date(d, 'dd.MM.yyyy')}} —
+     * because the sandbox forbids building formatters with static calls.
+     */
+    public static final String FORMAT_HELPER_VARIABLE = "fmt";
+
     private final WordprocessingMLPackage wordPackage;
     private final Map<String, Object> rawContext;
+    /** Helpers exposed to SpEL as {@code #name}; separate from the document data in {@link #rawContext}. */
+    private final Map<String, Object> spelVariables;
     private final Map<String, List<Map<String, Object>>> dataArrays;
     private final Map<String, String> formatMap;
     private final Set<String> richTextKeys;
@@ -114,11 +126,15 @@ public final class MubanDocxEngine {
                              TxtExportOptions txtOptions,
                              PngExportOptions pngOptions) {
         this.wordPackage = wordPackage;
-        this.rawContext = rawContext;
+        // #{let} declarations are written into the context during processing, so the engine works on
+        // a mutable copy rather than the unmodifiable map built by DocxContextBuilder.
+        this.rawContext = rawContext != null ? new LinkedHashMap<>(rawContext) : new LinkedHashMap<>();
         this.dataArrays = dataArrays;
         this.formatMap = formatMap;
         this.richTextKeys = richTextKeys;
         this.locale = locale;
+        this.spelVariables = new LinkedHashMap<>();
+        this.spelVariables.put(FORMAT_HELPER_VARIABLE, new DocxFormatHelper(locale));
         this.outputDir = outputDir;
         this.outputFormat = outputFormat;
         this.assetDir = assetDir;
@@ -145,19 +161,22 @@ public final class MubanDocxEngine {
                     "Failed to prepare document for variable replacement: " + e.getMessage(), e);
         }
 
-        // Step 1: Conditional blocks (body + headers/footers)
+        // Step 1: Template variables (#{let ...}) — declarations must exist before conditions
+        resolveVariables();
+
+        // Step 2: Conditional blocks (body + headers/footers)
         processConditionalBlocks();
 
-        // Step 2: Placeholder replacement (with table row replication)
+        // Step 3: Placeholder replacement (with table row replication)
         processContent(wordPackage.getMainDocumentPart().getContent());
         processHeadersAndFooters();
 
-        // Step 3: Image replacement
+        // Step 4: Image replacement
         if (assetDir != null) {
-            DocxImageReplacer.replaceImages(wordPackage, rawContext, assetDir, locale);
+            DocxImageReplacer.replaceImages(wordPackage, rawContext, assetDir, locale, spelVariables);
         }
 
-        // Step 4: Export
+        // Step 5: Export
         String result = DocxExporter.exportDocument(
                 wordPackage, outputFormat, outputDir, pdfOptions, securityCallback, txtOptions, pngOptions);
 
@@ -170,7 +189,7 @@ public final class MubanDocxEngine {
     /**
      * Process the template in-memory without exporting.
      *
-     * <p>Runs the content processing pipeline (conditionals, placeholders,
+     * <p>Runs the content processing pipeline (variables, conditionals, placeholders,
      * table row replication, images) and returns the modified
      * {@link WordprocessingMLPackage}. The caller is responsible
      * for saving or further processing the package.
@@ -183,11 +202,12 @@ public final class MubanDocxEngine {
      * @return the processed DOCX package
      */
     public WordprocessingMLPackage process() {
+        resolveVariables();
         processConditionalBlocks();
         processContent(wordPackage.getMainDocumentPart().getContent());
         processHeadersAndFooters();
         if (assetDir != null) {
-            DocxImageReplacer.replaceImages(wordPackage, rawContext, assetDir, locale);
+            DocxImageReplacer.replaceImages(wordPackage, rawContext, assetDir, locale, spelVariables);
         }
         return wordPackage;
     }
@@ -196,7 +216,7 @@ public final class MubanDocxEngine {
 
     private void processConditionalBlocks() {
         int bodyBlocks = DocxConditionalProcessor.processConditionals(
-                wordPackage.getMainDocumentPart().getContent(), rawContext, locale);
+                wordPackage.getMainDocumentPart().getContent(), rawContext, locale, spelVariables);
 
         int hfBlocks = 0;
         try {
@@ -230,13 +250,74 @@ public final class MubanDocxEngine {
                 Object content = jaxbPart.getContents();
                 if (content instanceof ContentAccessor accessor) {
                     return DocxConditionalProcessor.processConditionals(
-                            accessor.getContent(), rawContext, locale);
+                            accessor.getContent(), rawContext, locale, spelVariables);
                 }
             } catch (Exception e) {
                 log.debug("Error processing conditional blocks in header/footer: {}", e.getMessage());
             }
         }
         return 0;
+    }
+
+    /**
+     * Resolve template variables ({@code #{let name = expression}}) in the body and in
+     * headers/footers, removing the declaration paragraphs.
+     *
+     * <p>Runs before conditional blocks so that a branch condition may reference a variable, and
+     * before placeholder replacement so that {@code ${name}} resolves. See
+     * {@link DocxVariableProcessor} for the full semantics.
+     */
+    private void resolveVariables() {
+        int declared = DocxVariableProcessor.processVariables(
+                wordPackage.getMainDocumentPart().getContent(), rawContext, spelVariables, locale);
+
+        int[] inParts = {0};
+        forEachHeaderFooterPart(wordPackage, part -> inParts[0] += resolveVariablesInPart(part));
+        declared += inParts[0];
+
+        if (declared > 0) {
+            log.debug("Resolved {} template variable declaration(s)", declared);
+        }
+    }
+
+    private int resolveVariablesInPart(Object part) {
+        if (part instanceof org.docx4j.openpackaging.parts.JaxbXmlPart<?> jaxbPart) {
+            try {
+                if (jaxbPart.getContents() instanceof ContentAccessor accessor) {
+                    return DocxVariableProcessor.processVariables(
+                            accessor.getContent(), rawContext, spelVariables, locale);
+                }
+            } catch (Exception e) {
+                log.debug("Error processing template variables in header/footer: {}", e.getMessage());
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Run an action for every header and every footer of the document.
+     *
+     * <p>Traversal problems are logged rather than propagated: headers and footers are optional
+     * decoration, and a broken one must not abort document generation.
+     */
+    private static void forEachHeaderFooterPart(WordprocessingMLPackage wordPackage, Consumer<Object> action) {
+        try {
+            if (wordPackage.getDocumentModel() == null) {
+                return;
+            }
+            for (var section : wordPackage.getDocumentModel().getSections()) {
+                var hfp = section.getHeaderFooterPolicy();
+                if (hfp == null) continue;
+                action.accept(hfp.getDefaultHeader());
+                action.accept(hfp.getDefaultFooter());
+                action.accept(hfp.getFirstHeader());
+                action.accept(hfp.getFirstFooter());
+                action.accept(hfp.getEvenHeader());
+                action.accept(hfp.getEvenFooter());
+            }
+        } catch (Exception e) {
+            log.debug("Could not traverse headers/footers: {}", e.getMessage());
+        }
     }
 
     private void processHeadersAndFooters() {
@@ -280,7 +361,7 @@ public final class MubanDocxEngine {
             Object unwrapped = DocxXmlUtils.unwrap(obj);
 
             if (unwrapped instanceof Tbl table) {
-                DocxTableProcessor.processTable(table, rawContext, dataArrays, locale,
+                DocxTableProcessor.processTable(table, rawContext, dataArrays, locale, spelVariables,
                         (c, ctx, arrays, loc) -> processContent(c));
             } else if (unwrapped instanceof P paragraph) {
                 replacePlaceholders(paragraph);
@@ -345,7 +426,7 @@ public final class MubanDocxEngine {
         StringBuilder result = new StringBuilder();
         while (matcher.find()) {
             String body = matcher.group(1).trim();
-            String replacement = DocxExpressionEvaluator.evaluate(body, rawContext, locale);
+            String replacement = DocxExpressionEvaluator.evaluate(body, rawContext, locale, spelVariables);
             replacement = applyConfiguredFormat(body, replacement);
             matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
         }
@@ -384,7 +465,7 @@ public final class MubanDocxEngine {
             boolean html = hasRichTextPrefix(body);
             String expression = html ? body.substring(RICH_TEXT_PREFIX.length()).trim() : body;
 
-            String value = DocxExpressionEvaluator.evaluate(expression, rawContext, locale);
+            String value = DocxExpressionEvaluator.evaluate(expression, rawContext, locale, spelVariables);
             value = applyConfiguredFormat(expression, value);
 
             if (html || isRichKey(expression)) {
@@ -451,6 +532,40 @@ public final class MubanDocxEngine {
      */
     public static Set<String> extractImageKeys(WordprocessingMLPackage wordPackage) {
         return DocxImageReplacer.extractImageKeys(wordPackage);
+    }
+
+    /**
+     * Extract the variable declarations ({@code #{let name = expression}}) from a DOCX package
+     * without processing it.
+     *
+     * <p>Scans the body and headers/footers and returns the declarations in document order, so a
+     * caller can validate a template or derive which input fields it depends on before rendering.
+     *
+     * @param wordPackage the loaded template, or {@code null}
+     * @return insertion-ordered map of variable name → expression; empty when nothing is declared
+     */
+    public static Map<String, String> extractDeclaredVariables(WordprocessingMLPackage wordPackage) {
+        Map<String, String> declarations = DocxVariableProcessor.newDeclarationMap();
+        if (wordPackage == null) {
+            return declarations;
+        }
+
+        DocxVariableProcessor.collectDeclarations(
+                wordPackage.getMainDocumentPart().getContent(), declarations);
+
+        forEachHeaderFooterPart(wordPackage, part -> {
+            if (part instanceof org.docx4j.openpackaging.parts.JaxbXmlPart<?> jaxbPart) {
+                try {
+                    if (jaxbPart.getContents() instanceof ContentAccessor accessor) {
+                        DocxVariableProcessor.collectDeclarations(accessor.getContent(), declarations);
+                    }
+                } catch (Exception e) {
+                    log.debug("Could not scan header/footer for template variables: {}", e.getMessage());
+                }
+            }
+        });
+
+        return declarations;
     }
 
     /**
