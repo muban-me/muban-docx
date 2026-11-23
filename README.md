@@ -141,16 +141,20 @@ locale-bound helper into the SpEL context as `#fmt`, so the pattern is written w
 is rendered:
 
 ```text
-Termin płatności: ${#fmt.date(due_date, 'd MMMM yyyy')}.
-Kwota: ${#fmt.number(debt_total_amount, '#,##0.00')} zł.
+Payment due: ${#fmt.date(due_date, 'd MMMM yyyy')}.
+Amount: ${#fmt.number(outstanding_amount, '#,##0.00')}.
 ```
 
-| Call | Result (pl-PL) |
+| Call | Result (en-US) |
 | --- | --- |
-| `${#fmt.date(d, 'dd.MM.yyyy')}` | `23.11.2026` |
-| `${#fmt.date(d, 'd MMMM yyyy')}` | `23 listopada 2026` — genitive, used inside a date |
-| `${#fmt.date(d, 'LLLL yyyy')}` | `listopad 2026` — stand-alone nominative |
-| `${#fmt.number(n, '#,##0.00')}` | `1 234,50` |
+| `${#fmt.date(d, 'yyyy-MM-dd')}` | `2026-11-23` |
+| `${#fmt.date(d, 'd MMMM yyyy')}` | `23 November 2026` |
+| `${#fmt.date(d, 'LLLL yyyy')}` | `November 2026` — stand-alone form |
+| `${#fmt.number(n, '#,##0.00')}` | `1,234.50` |
+
+The locale passed to the engine decides month names and separators. `MMMM` follows the
+format-wide form and `LLLL` the stand-alone form; the difference matters for languages that inflect
+month names (Slavic ones, for instance).
 
 - The input may be a `LocalDate` / `LocalDateTime`, a `java.util.Date`, or a string. ISO-8601 is
   the expected string form; `dd.MM.yyyy`, `dd-MM-yyyy`, `dd/MM/yyyy` and `yyyy-MM-dd HH:mm[:ss]`
@@ -170,13 +174,13 @@ declension of nouns or forms of address — stays out of the library. Wording th
 value is written as an ordinary expression, which also keeps the text visible next to its context:
 
 ```text
-dłużnik ${addressee_gender == 'F' ? 'opłaciła' : 'opłacił'} należność
-#{let salutation = addressee_gender == 'M' ? 'Szanowny Panie,' : (addressee_gender == 'F' ? 'Szanowna Pani,' : 'Szanowni Państwo,')}
+${customer_type == 'CORPORATE' ? 'the company has paid' : 'you have paid'}
+#{let salutation = addressee_gender == 'M' ? 'Dear Mr,' : (addressee_gender == 'F' ? 'Dear Ms,' : 'Dear Sir or Madam,')}
 ```
 
-This covers words whose form depends **only** on the value — past-tense verbs, adjectives,
-pronouns, forms of address. Declension of nouns (a job title in the accusative, for example) is
-lexical and must come from the data.
+This covers words whose form depends **only** on the value — verb forms, adjectives, pronouns,
+forms of address. Lexical variation (a job title that has to decline, for example) is not derivable
+and must come from the data.
 
 ### Template variables (`#{let}`)
 
@@ -184,14 +188,14 @@ A declaration computes a value once and reuses it. Declarations are paragraphs o
 conditional markers, and are removed from the output:
 
 ```text
-#{let salutation = addressee_gender == 'M' ? 'Szanowny Panie,' : (addressee_gender == 'F' ? 'Szanowna Pani,' : 'Szanowni Państwo,')}
-#{let due_long = #fmt.date(debt_payment_date, 'd MMMM yyyy')}
-#{let demand = 'w kwocie ' + #fmt.number(debt_total_amount, '#,##0.00') + ' zł'}
+#{let salutation = addressee_gender == 'M' ? 'Dear Mr,' : (addressee_gender == 'F' ? 'Dear Ms,' : 'Dear Sir or Madam,')}
+#{let due_long = #fmt.date(payment_due_date, 'd MMMM yyyy')}
+#{let demand = 'the sum of ' + #fmt.number(outstanding_amount, '#,##0.00')}
 ```
 
 ```text
 ${#salutation}
-Termin upływa ${#due_long}. Wzywamy do zapłaty ${#demand}.
+Payment of ${#demand} is due by ${#due_long}.
 ```
 
 Declared names live in the **SpEL variable namespace**, so they are always referenced with a `#`:
@@ -226,7 +230,7 @@ conditionally — a declaration inside an `#{if}` block would run unconditionall
 inside the declaration:
 
 ```text
-#{let debtor_noun = addressee_gender == 'F' ? 'dłużniczka' : 'dłużnik'}
+#{let greeting = addressee_gender == 'F' ? 'Dear Ms,' : 'Dear Mr,'}
 ```
 
 Declarations can be listed without rendering, which is useful for validating a template or for
@@ -234,7 +238,7 @@ diagnosing why a `${#name}` stayed unresolved:
 
 ```java
 Map<String, String> declared = MubanDocxEngine.extractDeclaredVariables(wordPackage);
-// {salutation=addressee_gender == 'M' ? ... , due_long=#fmt.date(debt_payment_date, 'd MMMM yyyy'), ...}
+// {salutation=addressee_gender == 'M' ? ... , due_long=#fmt.date(payment_due_date, 'd MMMM yyyy'), ...}
 ```
 
 ### Rich text values
