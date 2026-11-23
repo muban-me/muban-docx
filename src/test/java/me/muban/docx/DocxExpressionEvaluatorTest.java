@@ -275,7 +275,7 @@ class DocxExpressionEvaluatorTest {
             Map<String, Object> ctx = Map.of("price", 1000, "qty", 3);
 
             String result = DocxExpressionEvaluator.evaluate(
-                    "price * qty", ctx, new Locale("pl", "PL"));
+                    "price * qty", ctx, Locale.of("pl", "PL"));
 
             // Polish locale uses non-breaking space as grouping separator
             assertThat(result).contains("3");
@@ -288,7 +288,7 @@ class DocxExpressionEvaluatorTest {
             Map<String, Object> ctx = Map.of("name", "John");
 
             String result = DocxExpressionEvaluator.evaluate(
-                    "name.toUpperCase()", ctx, new Locale("pl", "PL"));
+                    "name.toUpperCase()", ctx, Locale.of("pl", "PL"));
 
             assertThat(result).isEqualTo("JOHN");
         }

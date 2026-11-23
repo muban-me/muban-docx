@@ -38,6 +38,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   belonging to the array, was handled as a scalar row, and the placeholder stayed unresolved.
 - `MubanDocxEngine` now works on a mutable copy of the context map, because `#{let}` declarations
   are written into it during processing.
+- `LocaleUtils.parseLocale` builds locales with `Locale.of(...)` instead of the deprecated `Locale`
+  constructors. Behaviour is unchanged — including the rejection of a fourth segment — and the
+  module now compiles without deprecation warnings on Java 21.
 
 ### Documentation
 

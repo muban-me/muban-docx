@@ -101,7 +101,7 @@ class LocaleUtilsTest {
         @Test
         @DisplayName("should format double with Polish locale")
         void shouldFormatDoublePolish() {
-            Locale plPL = new Locale("pl", "PL");
+            Locale plPL = Locale.of("pl", "PL");
             String result = LocaleUtils.formatValue(1234.56, plPL);
             assertThat(result).contains(",");
             assertThat(result).contains("234");
