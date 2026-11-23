@@ -19,9 +19,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   sandbox forbids `T(...)` and constructors, so a template could not build a `DateTimeFormatter`.
 - **Template variables `#{let name = expression}`.** Declarations in their own paragraphs, resolved
   sequentially in document order before conditional blocks, then removed from the output. Declared
-  names are ordinary context entries, so they work in `${name}` and in `#{if}` conditions, and keep
-  their raw type (a number stays a number). A failing expression leaves the variable undefined —
-  the placeholder stays visible — and logs a warning; shadowing an input field is allowed but logged.
+  names live in the **SpEL variable namespace**, so they are referenced as `${#name}` in text and
+  `#{if #name ...}` in conditions; the unprefixed namespace stays reserved for input data. Values
+  keep their raw type (a number stays a number). `root` and `this` are reserved by SpEL and `fmt`
+  by the engine — declarations using those names are ignored with a warning.
+- **Unknown-variable pre-flight.** A `${#name}` (or a condition) that references a variable which
+  is neither declared nor provided by the engine now leaves the placeholder visible and logs a
+  warning. Without it, SpEL would resolve a missing variable to `null` and the template would
+  silently print an empty string — unacceptable for legal correspondence.
 - **`MubanDocxEngine.extractDeclaredVariables(WordprocessingMLPackage)`.** Lists declarations from
   the body and headers/footers without rendering, for template validation and for deriving which
   input fields a template depends on.
@@ -36,8 +41,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `${arrayKey.field}` placeholder.** Previously a row whose placeholder was wrapped in an
   expression — for example `${#fmt.date(items.due_date, 'dd.MM.yyyy')}` — was not recognised as
   belonging to the array, was handled as a scalar row, and the placeholder stayed unresolved.
-- `MubanDocxEngine` now works on a mutable copy of the context map, because `#{let}` declarations
-  are written into it during processing.
+- `MubanDocxEngine` now resolves declarations into the SpEL variable namespace instead of writing
+  them into the document context, so `${name}` and `${#name}` can never collide.
+- `DocxExpressionEvaluator.extractVariableReferences` no longer reports `#`-prefixed identifiers:
+  `#fmt` and `#salutation` are template internals, not input fields, so template discovery stays a
+  pure view of the contract. The helper's arguments are still reported
+  (`#fmt.date(document_date, ...)` → `document_date`).
 - `LocaleUtils.parseLocale` builds locales with `Locale.of(...)` instead of the deprecated `Locale`
   constructors. Behaviour is unchanged — including the rejection of a fourth segment — and the
   module now compiles without deprecation warnings on Java 21.

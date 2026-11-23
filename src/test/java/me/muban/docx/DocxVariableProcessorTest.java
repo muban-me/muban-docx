@@ -30,17 +30,17 @@ class DocxVariableProcessorTest {
     private static final Locale PL = Locale.forLanguageTag("pl-PL");
 
     private Map<String, Object> context;
-    private Map<String, Object> helpers;
+    private Map<String, Object> variables;
 
     @BeforeEach
     void setUp() {
         context = new LinkedHashMap<>();
-        helpers = new LinkedHashMap<>();
-        helpers.put(MubanDocxEngine.FORMAT_HELPER_VARIABLE, new DocxFormatHelper(PL));
+        variables = new LinkedHashMap<>();
+        variables.put(MubanDocxEngine.FORMAT_HELPER_VARIABLE, new DocxFormatHelper(PL));
     }
 
     private int process(List<Object> content) {
-        return DocxVariableProcessor.processVariables(content, context, helpers, PL);
+        return DocxVariableProcessor.processVariables(content, context, variables, PL);
     }
 
     private static List<Object> contentOf(String... paragraphTexts) {
@@ -65,7 +65,7 @@ class DocxVariableProcessorTest {
             int resolved = process(content);
 
             assertThat(resolved).isEqualTo(1);
-            assertThat(context).containsEntry("salutation", "Szanowny Panie,");
+            assertThat(variables).containsEntry("salutation", "Szanowny Panie,");
             assertThat(content).isEmpty();
         }
 
@@ -88,23 +88,23 @@ class DocxVariableProcessorTest {
         void sequentialEvaluation() {
             List<Object> content = contentOf(
                     "#{let base = 100}",
-                    "#{let with_interest = base * 2}");
+                    "#{let with_interest = #base * 2}");
 
             process(content);
 
-            assertThat(context).containsEntry("base", 100);
-            assertThat(context).containsEntry("with_interest", 200);
+            assertThat(variables).containsEntry("base", 100);
+            assertThat(variables).containsEntry("with_interest", 200);
         }
 
         @Test
         @DisplayName("a forward reference leaves the variable undefined")
         void forwardReference() {
-            List<Object> content = contentOf("#{let doubled = base * 2}");
+            List<Object> content = contentOf("#{let doubled = #base * 2}");
 
             int resolved = process(content);
 
             assertThat(resolved).isZero();
-            assertThat(context).doesNotContainKey("doubled");
+            assertThat(variables).doesNotContainKey("doubled");
             assertThat(content).isEmpty();
         }
 
@@ -114,19 +114,40 @@ class DocxVariableProcessorTest {
             List<Object> content = contentOf("#{let broken = no_such_field}");
 
             assertThat(process(content)).isZero();
-            assertThat(context).doesNotContainKey("broken");
+            assertThat(variables).doesNotContainKey("broken");
             assertThat(content).isEmpty();
         }
 
         @Test
-        @DisplayName("an overriding declaration wins over the input value")
-        void overridesInput() {
+        @DisplayName("a declaration never writes into the input data namespace")
+        void doesNotTouchInputData() {
             context.put("addressee_name", "z UDA");
             List<Object> content = contentOf("#{let addressee_name = 'z szablonu'}");
 
             process(content);
 
-            assertThat(context).containsEntry("addressee_name", "z szablonu");
+            assertThat(variables).containsEntry("addressee_name", "z szablonu");
+            assertThat(context).containsEntry("addressee_name", "z UDA");
+        }
+
+        @Test
+        @DisplayName("a declaration cannot take a name reserved by SpEL")
+        void reservedName() {
+            List<Object> content = contentOf("#{let root = 'próba'}");
+
+            assertThat(process(content)).isZero();
+            assertThat(variables).doesNotContainKey("root");
+            assertThat(content).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a declaration cannot replace an engine helper")
+        void helperNameReserved() {
+            List<Object> content = contentOf("#{let fmt = 'próba'}");
+
+            assertThat(process(content)).isZero();
+            assertThat(variables.get("fmt")).isInstanceOf(DocxFormatHelper.class);
+            assertThat(content).isEmpty();
         }
 
         @Test
@@ -137,8 +158,8 @@ class DocxVariableProcessorTest {
 
             process(content);
 
-            assertThat(context.get("amount")).isInstanceOf(java.math.BigDecimal.class);
-            assertThat(context.get("amount")).isEqualTo(new java.math.BigDecimal("25.00"));
+            assertThat(variables.get("amount")).isInstanceOf(java.math.BigDecimal.class);
+            assertThat(variables.get("amount")).isEqualTo(new java.math.BigDecimal("25.00"));
         }
 
         @Test
@@ -149,8 +170,8 @@ class DocxVariableProcessorTest {
 
             process(content);
 
-            assertThat(context).containsKey("copy");
-            assertThat(context.get("copy")).isNull();
+            assertThat(variables).containsKey("copy");
+            assertThat(variables.get("copy")).isNull();
         }
 
         @Test
@@ -169,7 +190,7 @@ class DocxVariableProcessorTest {
 
             process(content);
 
-            assertThat(context).containsEntry("literal", "#{}");
+            assertThat(variables).containsEntry("literal", "#{}");
         }
 
         @Test
@@ -183,7 +204,7 @@ class DocxVariableProcessorTest {
 
             process(content);
 
-            assertThat(context).containsEntry("x", "AB");
+            assertThat(variables).containsEntry("x", "AB");
             assertThat(content).isEmpty();
         }
 
@@ -201,7 +222,7 @@ class DocxVariableProcessorTest {
             content.add(table);
 
             assertThat(process(content)).isEqualTo(1);
-            assertThat(context).containsEntry("inner", "z tabeli");
+            assertThat(variables).containsEntry("inner", "z tabeli");
             assertThat(cell.getContent()).isEmpty();
         }
 
@@ -214,7 +235,7 @@ class DocxVariableProcessorTest {
 
             process(content);
 
-            assertThat(context).containsEntry("salutation", "Szanowna Pani,");
+            assertThat(variables).containsEntry("salutation", "Szanowna Pani,");
         }
     }
 
@@ -232,7 +253,7 @@ class DocxVariableProcessorTest {
 
             process(content);
 
-            assertThat(context).containsEntry("due", "23 listopada 2026");
+            assertThat(variables).containsEntry("due", "23 listopada 2026");
         }
     }
 

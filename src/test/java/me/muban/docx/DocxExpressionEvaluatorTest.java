@@ -657,5 +657,99 @@ class DocxExpressionEvaluatorTest {
                     "items.size() > 3 ? 'many' : 'few'"))
                     .isEmpty();
         }
+
+        @Test
+        @DisplayName("a #variable is template-internal and is not reported as an input field")
+        void templateVariableSkipped() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("#salutation"))
+                    .isEmpty();
+            assertThat(DocxExpressionEvaluator.extractVariableReferences("#a.b"))
+                    .isEmpty();
+        }
+
+        @Test
+        @DisplayName("a helper call keeps its argument but not the helper name")
+        void helperArgumentKept() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "#fmt.date(document_date, 'dd.MM.yyyy')"))
+                    .containsExactly("document_date");
+        }
+
+        @Test
+        @DisplayName("data and template variables in one expression: only data is reported")
+        void mixedExpression() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "status == 'OK' and #expected == status"))
+                    .containsExactly("status");
+        }
+
+        @Test
+        @DisplayName("a '#' inside a string literal is not a variable reference")
+        void hashInStringLiteral() {
+            assertThat(DocxExpressionEvaluator.extractVariableReferences(
+                    "'#tag' == value"))
+                    .containsExactly("value");
+        }
+    }
+
+    // ==================== unknown template variable pre-flight ====================
+
+    @Nested
+    @DisplayName("evaluate() — unknown #variable pre-flight")
+    class UnknownVariablePreflightTests {
+
+        @Test
+        @DisplayName("a declared variable resolves")
+        void knownVariable() {
+            String result = DocxExpressionEvaluator.evaluate(
+                    "#salutation", Map.of(), null, Map.of("salutation", "Szanowna Pani,"));
+
+            assertThat(result).isEqualTo("Szanowna Pani,");
+        }
+
+        @Test
+        @DisplayName("an undeclared variable leaves the placeholder visible instead of rendering blank")
+        void unknownVariable() {
+            String result = DocxExpressionEvaluator.evaluate(
+                    "#nie_ma", Map.of("status", "OK"), null, Map.of());
+
+            assertThat(result).isEqualTo("${#nie_ma}");
+        }
+
+        @Test
+        @DisplayName("a missing variable would otherwise evaluate to null — the pre-flight catches it")
+        void preventSilentBlank() {
+            assertThat(DocxExpressionEvaluator.evaluate(
+                    "#nie_ma + 'x'", Map.of(), null, Map.of()))
+                    .isEqualTo("${#nie_ma + 'x'}");
+        }
+
+        @Test
+        @DisplayName("the helper name is checked up to the first dot")
+        void helperNameNotConfusedWithProperty() {
+            DocxFormatHelper format = new DocxFormatHelper(Locale.forLanguageTag("pl-PL"));
+
+            String result = DocxExpressionEvaluator.evaluate(
+                    "#fmt.date('2026-11-23', 'dd.MM.yyyy')", Map.of(), null, Map.of("fmt", format));
+
+            assertThat(result).isEqualTo("23.11.2026");
+        }
+
+        @Test
+        @DisplayName("#root and #this belong to the SpEL runtime and are allowed")
+        void predefinedVariablesAllowed() {
+            assertThat(DocxExpressionEvaluator.evaluate("#root", Map.of("a", 1), null, Map.of()))
+                    .doesNotStartWith("${");
+            assertThat(DocxExpressionEvaluator.evaluate("#this", Map.of("a", 1), null, Map.of()))
+                    .doesNotStartWith("${");
+        }
+
+        @Test
+        @DisplayName("a '#' inside a string literal does not trigger the pre-flight")
+        void hashInLiteralIgnored() {
+            assertThat(DocxExpressionEvaluator.evaluate(
+                    "'#nie_ma' == '#nie_ma'", Map.of(), null, Map.of()))
+                    .isEqualTo("true");
+        }
     }
 }

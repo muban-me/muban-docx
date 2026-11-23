@@ -126,9 +126,7 @@ public final class MubanDocxEngine {
                              TxtExportOptions txtOptions,
                              PngExportOptions pngOptions) {
         this.wordPackage = wordPackage;
-        // #{let} declarations are written into the context during processing, so the engine works on
-        // a mutable copy rather than the unmodifiable map built by DocxContextBuilder.
-        this.rawContext = rawContext != null ? new LinkedHashMap<>(rawContext) : new LinkedHashMap<>();
+        this.rawContext = rawContext;
         this.dataArrays = dataArrays;
         this.formatMap = formatMap;
         this.richTextKeys = richTextKeys;

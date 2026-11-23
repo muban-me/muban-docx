@@ -62,6 +62,18 @@ public class DocxExpressionEvaluator {
     private static final Pattern STRING_LITERAL_PATTERN =
             Pattern.compile("'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"");
 
+    /**
+     * SpEL variables that always exist and therefore need no declaration.
+     */
+    private static final Set<String> PREDEFINED_VARIABLES = Set.of("root", "this");
+
+    /**
+     * Pattern for a variable reference: {@code #name}, with the name captured up to the first dot so
+     * {@code #fmt.date(...)} checks {@code fmt} rather than {@code fmt.date}.
+     */
+    private static final Pattern VARIABLE_REFERENCE_PATTERN =
+            Pattern.compile("#([a-zA-Z_][a-zA-Z0-9_]*)");
+
     private DocxExpressionEvaluator() {}
 
     /**
@@ -160,6 +172,17 @@ public class DocxExpressionEvaluator {
     private static Result evaluateInternal(String expression, Map<String, Object> rawContext,
                                            Locale locale, Map<String, Object> variables) {
         Map<String, Object> context = rawContext != null ? rawContext : Collections.emptyMap();
+
+        // A missing SpEL variable evaluates to null instead of failing, which would silently turn a
+        // typo into an empty string in a legal document. Reject unknown variables up front so the
+        // placeholder stays visible, exactly like a missing input field.
+        String unknownVariable = findUnknownVariable(expression, variables);
+        if (unknownVariable != null) {
+            log.warn("Unknown template variable '#{}' in expression '{}' — placeholder left visible",
+                    unknownVariable, expression);
+            return Result.failure();
+        }
+
         try {
             EvaluationContext evalContext = SimpleEvaluationContext
                     .forPropertyAccessors(new MapAccessor())
@@ -174,6 +197,37 @@ public class DocxExpressionEvaluator {
             log.warn("SpEL expression evaluation failed for '{}': {}", expression, e.getMessage());
             return Result.failure();
         }
+    }
+
+    /**
+     * Find the first {@code #variable} in an expression that is neither predefined nor registered.
+     *
+     * <p>String literals are blanked out first, so {@code '#'} inside a literal is not mistaken for
+     * a reference. The captured name stops at the first dot, because {@code #fmt.date(...)} refers
+     * to the {@code fmt} variable.
+     *
+     * @param expression the expression to scan
+     * @param variables  the variables available to the expression; may be {@code null}
+     * @return the first unknown variable name, or {@code null} when every reference is known
+     */
+    static String findUnknownVariable(String expression, Map<String, Object> variables) {
+        if (expression == null || expression.indexOf('#') < 0) {
+            return null;
+        }
+
+        String stripped = STRING_LITERAL_PATTERN.matcher(expression).replaceAll(" ");
+        Matcher matcher = VARIABLE_REFERENCE_PATTERN.matcher(stripped);
+
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            if (PREDEFINED_VARIABLES.contains(name)) {
+                continue;
+            }
+            if (variables == null || !variables.containsKey(name)) {
+                return name;
+            }
+        }
+        return null;
     }
 
     /**
@@ -194,6 +248,8 @@ public class DocxExpressionEvaluator {
      *       relies on other occurrences of {@code name} in the template)</li>
      *   <li>{@code "price * quantity"} → {@code ["price", "quantity"]}</li>
      *   <li>{@code "gender == 'F' ? 'a.png' : 'b.png'"} → {@code ["gender"]}</li>
+     *   <li>{@code "#salutation"} → {@code []} (a {@code #}-prefixed name is a template-internal
+     *       variable, not an input field)</li>
      * </ul>
      *
      * <p><b>Method calls are skipped entirely</b> — {@code items.size()} does not extract
@@ -218,6 +274,12 @@ public class DocxExpressionEvaluator {
         while (matcher.find()) {
             String token = matcher.group();
             int end = matcher.end();
+
+            // A '#'-prefixed identifier is a template-internal SpEL variable (#fmt, #salutation),
+            // never an input field — skip it so template discovery stays a pure contract view.
+            if (matcher.start() > 0 && stripped.charAt(matcher.start() - 1) == '#') {
+                continue;
+            }
 
             // Skip method calls entirely: identifier immediately followed by '('
             // e.g., "items.size()" or "name.toUpperCase()" — the object part is NOT

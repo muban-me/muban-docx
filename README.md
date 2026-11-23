@@ -9,7 +9,7 @@ via docx4j + Apache FOP.
 | Feature | Description |
 | --- | --- |
 | **SpEL expressions** | `${name}`, `${price * qty}`, `${price > 1000 ? 'Premium' : 'Standard'}` — powered by Spring Expression Language with a sandboxed evaluator |
-| **Template variables** | `#{let name = expr}` declarations, usable in `${...}` and in `#{if}` conditions — the DOCX counterpart of JasperReports report variables |
+| **Template variables** | `#{let name = expr}` declarations, referenced as `${#name}` and in `#{if}` conditions — the DOCX counterpart of JasperReports report variables |
 | **Formatting helper** | `#fmt.date` and `#fmt.number` — date and number patterns live in the template instead of the input data |
 | **Rich text values** | `${html:footer}` renders a whitelisted HTML subset (`<br>`, `<b>`, `<i>`, `<u>`, `<sup>`, `<sub>`, entities) as Word runs — for HTML fragments coming from a CMS or rules engine |
 | **Conditional blocks** | `#{if expr}` / `#{elseif expr}` / `#{else}` / `#{fi}` — paragraph-level branches with boolean coercion, nesting supported |
@@ -190,20 +190,34 @@ conditional markers, and are removed from the output:
 ```
 
 ```text
-${salutation}
-Termin upływa ${due_long}. Wzywamy do zapłaty ${demand}.
+${#salutation}
+Termin upływa ${#due_long}. Wzywamy do zapłaty ${#demand}.
 ```
+
+Declared names live in the **SpEL variable namespace**, so they are always referenced with a `#`:
+`${#salutation}` in text, `#{if #salutation == ...}` in conditions. That makes the template's
+contract readable — by a person and by tooling — without knowing anything about `#{let}`:
+
+| Syntax | Meaning |
+| --- | --- |
+| `${case_number}` | input data supplied by the caller |
+| `${#salutation}`, `${#fmt.date(...)}` | computed inside the template |
+| `#{if ...}` / `#{let ...}` / `#{fi}` | directives, not values |
 
 Rules:
 
-- **Document order.** A declaration may use the ones before it. A forward reference fails and
-  leaves the variable undefined, so there are no cycles to detect.
+- **Document order.** A declaration may use the ones before it — with `#`, so
+  `#{let total = #net + #vat}`. A forward reference fails and leaves the variable undefined,
+  so there are no cycles to detect.
 - **Scope.** The body and headers/footers share one namespace.
 - **Raw value.** The evaluated object is stored as-is — a number stays a number — so
-  `#fmt.number(...)` can format it later and `${name}` formats it at output time.
-- **Overriding input is allowed but logged.** Shadowing a field from the data raises a warning.
-- **Failure is loud.** An expression that cannot be evaluated leaves `${name}` visible in the
-  output instead of rendering an empty string.
+  `#fmt.number(#total, ...)` can format it later and `${#total}` formats it at output time.
+- **Separate namespace.** A declaration cannot shadow input data: `${name}` reads the data,
+  `${#name}` reads the declaration, and neither ever sees the other.
+- **Reserved names.** `root` and `this` belong to the SpEL runtime and `fmt` to the engine; a
+  declaration using one of them is ignored with a warning.
+- **Failure is loud.** An expression that cannot be evaluated, or a reference to an undeclared
+  `#variable`, leaves `${...}` visible in the output instead of rendering an empty string.
 - **Not inside replicated table rows.** Declarations are resolved before row replication, so a
   declaration placed in a template row would run once. Use an expression in the row instead.
 
@@ -215,8 +229,8 @@ inside the declaration:
 #{let debtor_noun = addressee_gender == 'F' ? 'dłużniczka' : 'dłużnik'}
 ```
 
-Declarations can be listed without rendering, which is useful for validating a template or
-for deriving which input fields it depends on:
+Declarations can be listed without rendering, which is useful for validating a template or for
+diagnosing why a `${#name}` stayed unresolved:
 
 ```java
 Map<String, String> declared = MubanDocxEngine.extractDeclaredVariables(wordPackage);

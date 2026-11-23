@@ -62,8 +62,8 @@ class MubanDocxEngineVariablesTest {
             WordprocessingMLPackage docx = createDocx(
                     SALUTATION_DECLARATION,
                     "#{let due = #fmt.date(document_date, 'd MMMM yyyy')}",
-                    "${salutation}",
-                    "Termin płatności: ${due}.",
+                    "${#salutation}",
+                    "Termin płatności: ${#due}.",
                     "${#fmt.number(debt_total_amount, '#,##0.00')} zł");
 
             Map<String, Object> context = new LinkedHashMap<>();
@@ -84,7 +84,7 @@ class MubanDocxEngineVariablesTest {
         void masculineVariant() throws Exception {
             WordprocessingMLPackage docx = createDocx(
                     SALUTATION_DECLARATION,
-                    "${salutation}");
+                    "${#salutation}");
 
             List<String> texts = processAndRead(docx, Map.of("addressee_gender", "M"));
 
@@ -96,7 +96,7 @@ class MubanDocxEngineVariablesTest {
         void companyVariant() throws Exception {
             WordprocessingMLPackage docx = createDocx(
                     SALUTATION_DECLARATION,
-                    "${salutation}");
+                    "${#salutation}");
 
             List<String> texts = processAndRead(docx, Map.of("addressee_gender", "CORPORATE"));
 
@@ -115,7 +115,7 @@ class MubanDocxEngineVariablesTest {
         void variableInCondition() throws Exception {
             WordprocessingMLPackage docx = createDocx(
                     "#{let is_company = addressee_gender != 'M' and addressee_gender != 'F'}",
-                    "#{if is_company}",
+                    "#{if #is_company}",
                     "Państwa zobowiązanie",
                     "#{else}",
                     "Pana/Pani zobowiązanie",
@@ -189,7 +189,7 @@ class MubanDocxEngineVariablesTest {
             WordprocessingMLPackage docx = createDocx(
                     SALUTATION_DECLARATION,
                     "#{let due = #fmt.date(document_date, 'd MMMM yyyy')}",
-                    "${salutation}");
+                    "${#salutation}");
 
             Map<String, String> declared = MubanDocxEngine.extractDeclaredVariables(docx);
 
@@ -205,6 +205,16 @@ class MubanDocxEngineVariablesTest {
             List<String> texts = processAndRead(docx, Map.of());
 
             assertThat(texts).containsExactly("Wartość: ${nie_ma_takiego_pola}");
+        }
+
+        @Test
+        @DisplayName("an undeclared #variable stays visible instead of rendering blank")
+        void undefinedTemplateVariableStaysVisible() throws Exception {
+            WordprocessingMLPackage docx = createDocx("Wartość: ${#nie_ma_takiej_zmiennej}");
+
+            List<String> texts = processAndRead(docx, Map.of());
+
+            assertThat(texts).containsExactly("Wartość: ${#nie_ma_takiej_zmiennej}");
         }
     }
 

@@ -6,9 +6,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,8 +28,11 @@ import java.util.regex.Pattern;
  * #{let due_date_long = #fmt.date(debt_payment_date, 'd MMMM yyyy')}
  * </pre>
  *
- * <p>Declared names become ordinary context entries, so they are used as {@code ${salutation}}
- * and may also appear inside conditional expressions ({@code #{if debtor_nom == ...}}).
+ * <p>Declared names live in the <b>SpEL variable namespace</b>, so they are referenced with a
+ * {@code #} prefix — {@code ${#salutation}} in text and {@code #{if #salutation == ...}} in
+ * conditions. The unprefixed namespace stays reserved for input data, which keeps the template's
+ * contract readable both for a human reviewer and for discovery tooling: everything without
+ * {@code #} comes from outside, everything with {@code #} is computed here.
  *
  * <h3>Semantics</h3>
  * <ul>
@@ -37,10 +42,11 @@ import java.util.regex.Pattern;
  *   <li><b>Whole document</b> — the body and headers/footers share one namespace.</li>
  *   <li><b>Raw value</b> — the evaluated object is stored as-is (a number stays a number), so
  *       {@code #fmt.number(...)} can still format it; locale formatting happens at output time.</li>
- *   <li><b>Overrides are visible</b> — a declaration that shadows an input field is accepted but
- *       logged as a warning, because silent shadowing hides data problems.</li>
+ *   <li><b>Reserved names</b> — {@code root} and {@code this} belong to the SpEL runtime and
+ *       {@code fmt} to the engine; a declaration using one of them is rejected with a warning,
+ *       because {@code setVariable} would be ignored and the reference would resolve elsewhere.</li>
  *   <li><b>Failure is loud</b> — an expression that cannot be evaluated leaves the variable
- *       undefined, so {@code ${name}} stays visible in the output instead of rendering as blank.</li>
+ *       undefined, so {@code ${#name}} stays visible in the output instead of rendering as blank.</li>
  *   <li><b>Document scope only</b> — declarations must not be placed inside a replicated table row:
  *       this phase runs before row replication, so such a declaration would be evaluated once.</li>
  * </ul>
@@ -73,6 +79,9 @@ final class DocxVariableProcessor {
 
     private static final String MARKER_CLOSE = "}";
 
+    /** Names the SpEL runtime owns; {@code setVariable} is ignored for them. */
+    private static final Set<String> RESERVED_NAMES = Set.of("root", "this");
+
     private DocxVariableProcessor() {}
 
     /** A recognised {@code #{let name = expression}} declaration. */
@@ -83,17 +92,20 @@ final class DocxVariableProcessor {
      * removing the marker paragraphs.
      *
      * @param content         the mutable content list (body, header, footer, table cell, …)
-     * @param context         the mutable evaluation context; declared names are written into it
-     * @param helperVariables variables exposed as {@code #name} (the format helper); may be null
+     * @param rawContext      the evaluation context for input data; declarations do not write here
+     * @param variables       the mutable SpEL variable map; declared names are written into it
      * @param locale          locale used when evaluating expressions, or null
      * @return the number of declarations successfully resolved
      */
     static int processVariables(List<Object> content,
-                                Map<String, Object> context,
-                                Map<String, Object> helperVariables,
+                                Map<String, Object> rawContext,
+                                Map<String, Object> variables,
                                 Locale locale) {
         int resolved = 0;
         int i = 0;
+
+        // Names that already exist before any declaration: the engine's helpers (#fmt).
+        Set<String> helperNames = variables == null ? Set.of() : new LinkedHashSet<>(variables.keySet());
 
         while (i < content.size()) {
             Object obj = DocxXmlUtils.unwrap(content.get(i));
@@ -101,7 +113,7 @@ final class DocxVariableProcessor {
             Declaration declaration = classify(content.get(i));
             if (declaration != null) {
                 Object value = DocxExpressionEvaluator.evaluateRaw(
-                        declaration.expression(), context, locale, helperVariables);
+                        declaration.expression(), rawContext, locale, variables);
 
                 // The marker never survives into the output, resolved or not.
                 content.remove(i);
@@ -113,16 +125,25 @@ final class DocxVariableProcessor {
                     continue;
                 }
 
-                if (context.containsKey(declaration.name())) {
-                    log.warn("Template variable '{}' overrides a value of the same name from the input data",
+                if (RESERVED_NAMES.contains(declaration.name())) {
+                    log.warn("Template variable '{}' uses a name reserved by SpEL — declaration ignored",
                             declaration.name());
+                    continue;
                 }
-                if (helperVariables != null && helperVariables.containsKey(declaration.name())) {
-                    log.warn("Template variable '{}' shadows a built-in '#' helper", declaration.name());
+                if (helperNames.contains(declaration.name())) {
+                    log.warn("Template variable '{}' would replace an engine helper — declaration ignored",
+                            declaration.name());
+                    continue;
                 }
 
-                context.put(declaration.name(), value);
-                log.debug("Template variable '{}' = {}", declaration.name(), value);
+                if (variables != null) {
+                    if (variables.containsKey(declaration.name())) {
+                        log.debug("Template variable '{}' is declared more than once; the last one wins",
+                                declaration.name());
+                    }
+                    variables.put(declaration.name(), value);
+                }
+                log.debug("Template variable '#{}' = {}", declaration.name(), value);
                 resolved++;
                 continue;
             }
@@ -130,7 +151,7 @@ final class DocxVariableProcessor {
             // Recurse into nested content (table cells, content controls, …). Paragraphs are
             // leaves for this phase.
             if (obj instanceof ContentAccessor accessor && !(obj instanceof P)) {
-                resolved += processVariables(accessor.getContent(), context, helperVariables, locale);
+                resolved += processVariables(accessor.getContent(), rawContext, variables, locale);
             }
 
             i++;
