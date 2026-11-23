@@ -47,10 +47,10 @@ import java.util.Locale;
  * <p><b>Scope.</b> This helper is deliberately domain-neutral: it knows patterns and locales, not
  * business vocabulary. Anything that needs a dictionary — amounts in words, month names in the
  * locative case, declension of nouns or forms of address — stays out of the library. A template
- * that needs a gender-dependent word pair expresses it as an ordinary expression, which also keeps
- * the wording visible next to its context:
+ * that needs a wording that varies with a data value expresses it as an ordinary expression, which
+ * also keeps the text visible next to its context:
  * <pre>{@code
- * ${addressee_gender == 'F' ? 'opłaciła' : 'opłacił'}
+ * ${addressee_gender == 'F' ? 'Dear Ms,' : 'Dear Mr,'}
  * }</pre>
  */
 public final class DocxFormatHelper {

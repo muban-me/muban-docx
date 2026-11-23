@@ -23,9 +23,8 @@ import java.util.regex.Pattern;
  * conditional markers they sit next to, and are removed from the output.
  *
  * <pre>
- * #{let salutation = "M".equals(addressee_gender) ? 'Szanowny Panie,' : ("F".equals(addressee_gender) ? 'Szanowna Pani,' : 'Szanowni Państwo,')}
- * #{let debtor_nom = addressee_gender == 'F' ? 'dłużniczka' : 'dłużnik'}
- * #{let due_date_long = #fmt.date(debt_payment_date, 'd MMMM yyyy')}
+ * #{let salutation = addressee_gender == 'M' ? 'Dear Mr,' : (addressee_gender == 'F' ? 'Dear Ms,' : 'Dear Sir or Madam,')}
+ * #{let due_date_long = #fmt.date(payment_due_date, 'd MMMM yyyy')}
  * </pre>
  *
  * <p>Declared names live in the <b>SpEL variable namespace</b>, so they are referenced with a
