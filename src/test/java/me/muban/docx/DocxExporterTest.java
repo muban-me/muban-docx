@@ -1,7 +1,11 @@
 package me.muban.docx;
 
+import org.docx4j.dml.wordprocessingDrawing.Inline;
 import org.docx4j.openpackaging.packages.WordprocessingMLPackage;
+import org.docx4j.openpackaging.parts.WordprocessingML.BinaryPartAbstractImage;
+import org.docx4j.wml.Drawing;
 import org.docx4j.wml.P;
+import org.docx4j.wml.R;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -9,6 +13,8 @@ import java.io.File;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -135,6 +141,136 @@ class DocxExporterTest {
             assertThat(remainingDirs)
                     .as("Temporary HTML directory should be cleaned up")
                     .isNullOrEmpty();
+        }
+    }
+
+    // ── HTML image modes ───────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("HTML image modes")
+    class HtmlImageModes {
+
+        @Test
+        @DisplayName("FILES writes image files and references them by relative path")
+        void filesModeWritesImages() throws Exception {
+            addTinyImage();
+
+            String outputPath = DocxExporter.exportHtml(wordPackage, tempDir.toString(),
+                    new HtmlExportOptions(HtmlImageMode.FILES));
+
+            try (ZipFile zip = new ZipFile(outputPath)) {
+                String html = readHtml(zip);
+                assertThat(html).contains("src=\"index.html_files/");
+                assertThat(imageEntries(zip))
+                        .as("ZIP should contain image files")
+                        .isNotEmpty();
+            }
+        }
+
+        @Test
+        @DisplayName("DATA_URI inlines images as base64 and writes no image files")
+        void dataUriModeInlinesImages() throws Exception {
+            addTinyImage();
+
+            String outputPath = DocxExporter.exportHtml(wordPackage, tempDir.toString(),
+                    new HtmlExportOptions(HtmlImageMode.DATA_URI));
+
+            try (ZipFile zip = new ZipFile(outputPath)) {
+                assertThat(readHtml(zip)).contains("src=\"data:image/png;base64,");
+                assertThat(imageEntries(zip))
+                        .as("ZIP should not contain image files")
+                        .isEmpty();
+            }
+        }
+
+        @Test
+        @DisplayName("CID references images by content ID, ships files and a manifest")
+        void cidModeWritesFilesAndManifest() throws Exception {
+            addTinyImage();
+
+            String outputPath = DocxExporter.exportHtml(wordPackage, tempDir.toString(),
+                    new HtmlExportOptions(HtmlImageMode.CID));
+
+            try (ZipFile zip = new ZipFile(outputPath)) {
+                String html = readHtml(zip);
+                assertThat(html).contains("src=\"cid:");
+
+                String contentId = html.substring(html.indexOf("src=\"cid:") + 9);
+                contentId = contentId.substring(0, contentId.indexOf('"'));
+                assertThat(contentId).isNotBlank();
+
+                assertThat(imageEntries(zip)).hasSize(1);
+
+                String manifest = readEntry(zip, HtmlImageManifest.FILE_NAME);
+                assertThat(manifest)
+                        .contains("\"version\": 1")
+                        .contains(contentId)
+                        .contains("\"contentType\": \"image/png\"");
+
+                String path = manifest.substring(manifest.indexOf("\"path\": \"") + 9);
+                path = path.substring(0, path.indexOf('"'));
+                String manifestPath = path;
+                assertThat(zip.stream().map(ZipEntry::getName)
+                        .filter(name -> name.endsWith("/" + manifestPath))
+                        .toList())
+                        .as("manifest path should point at an archive entry")
+                        .hasSize(1);
+            }
+        }
+
+        @Test
+        @DisplayName("NONE writes no image files")
+        void noneModeWritesNoImages() throws Exception {
+            addTinyImage();
+
+            String outputPath = DocxExporter.exportHtml(wordPackage, tempDir.toString(),
+                    new HtmlExportOptions(HtmlImageMode.NONE));
+
+            try (ZipFile zip = new ZipFile(outputPath)) {
+                assertThat(imageEntries(zip))
+                        .as("ZIP should not contain image files")
+                        .isEmpty();
+            }
+        }
+
+        private void addTinyImage() throws Exception {
+            byte[] png = Base64.getDecoder().decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==");
+
+            BinaryPartAbstractImage imagePart = BinaryPartAbstractImage.createImagePart(
+                    wordPackage, wordPackage.getMainDocumentPart(), png);
+            Inline inline = imagePart.createImageInline("pixel.png", "pixel", 1, 1, false);
+
+            P paragraph = new P();
+            R run = new R();
+            Drawing drawing = new Drawing();
+            drawing.getAnchorOrInline().add(inline);
+            run.getContent().add(drawing);
+            paragraph.getContent().add(run);
+            wordPackage.getMainDocumentPart().getContent().add(paragraph);
+        }
+
+        private String readHtml(ZipFile zip) throws Exception {
+            return readEntry(zip, "index.html");
+        }
+
+        private String readEntry(ZipFile zip, String nameSuffix) throws Exception {
+            ZipEntry entry = zip.stream()
+                    .filter(e -> e.getName().endsWith(nameSuffix))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError(nameSuffix + " not found in ZIP"));
+            try (InputStream is = zip.getInputStream(entry)) {
+                return new String(is.readAllBytes());
+            }
+        }
+
+        private List<String> imageEntries(ZipFile zip) {
+            return zip.stream()
+                    .map(ZipEntry::getName)
+                    .filter(name -> name.startsWith("index.html_files/")
+                            || name.contains("/index.html_files/"))
+                    .filter(name -> name.matches(".*\\.(png|jpe?g|gif|bmp|svg)$"))
+                    .toList();
         }
     }
 

@@ -432,6 +432,39 @@ String zipPath = MubanDocxEngine.builder()
 //   <uuid>/index.html_files/image1.png
 ```
 
+### Image modes
+
+`DocxExporter.exportHtml(pkg, outputDir, HtmlExportOptions)` selects how images
+are represented in the HTML:
+
+| Mode | HTML `src` | ZIP contents | Use case |
+| ---- | ---------- | ------------ | -------- |
+| `FILES` (default) | `index.html_files/image1.png` | image files | web hosting, self-contained micro-site |
+| `DATA_URI` | `data:image/png;base64,...` | no image files | single-file HTML; poorly supported by email clients |
+| `CID` | `cid:<id>@muban` | image files + `images.json` | email bodies assembled as `multipart/related` |
+| `NONE` | empty | no image files | HTML-only output; the caller strips the `<img>` elements |
+
+In `CID` mode `images.json` maps every Content-ID to its file, so the email
+sender never has to parse the HTML:
+
+```json
+{
+  "version": 1,
+  "images": [
+    {
+      "contentId": "8f14e45f...1.image1.png@muban",
+      "path": "index.html_files/image1.png",
+      "contentType": "image/png",
+      "size": 1204
+    }
+  ]
+}
+```
+
+Paths in the manifest are relative to `index.html`. `contentId` is written
+without angle brackets — use `Content-ID: <contentId>` on the matching MIME
+part.
+
 ## PNG export
 
 PNG export renders the document's XSL-FO layout directly with Apache FOP — no
