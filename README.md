@@ -561,6 +561,27 @@ mvn clean verify
 
 ## License
 
-This project is licensed under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
+muban-docx is **dual-licensed**.
+
+### Open source — [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)
+
+You may use, modify and distribute this library under AGPL-3.0, including in commercial
+projects. If you do, the combined work must be made available under AGPL-3.0 — this also
+applies when the software is offered to users over a network (AGPL-3.0, section 13).
+
+### Commercial license
+
+If you want to embed muban-docx in a proprietary product, without the obligations of
+AGPL-3.0, a separate commercial license is available from the copyright holder.
+Contact: [muban.me](https://muban.me).
+
+### Contributions
+
+By submitting a contribution to this project you agree that it may be distributed under
+the licenses above, and you grant the copyright holder a perpetual, irrevocable,
+worldwide, royalty-free license to use, modify, sublicense and relicense your
+contribution as part of this project.
+
+The full text of AGPL-3.0 is included in the [LICENSE](LICENSE) file.
 
 Copyright (c) 2025–2026 [muban.me](https://muban.me)

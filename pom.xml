@@ -21,6 +21,13 @@
         <license>
             <name>GNU Affero General Public License v3.0</name>
             <url>https://www.gnu.org/licenses/agpl-3.0.html</url>
+            <distribution>repo</distribution>
+        </license>
+        <license>
+            <name>Commercial License (alternative to AGPL-3.0)</name>
+            <url>https://github.com/muban-me/muban-docx#license</url>
+            <distribution>manual</distribution>
+            <comments>Allows embedding in proprietary products without the obligations of AGPL-3.0. Available from the copyright holder.</comments>
         </license>
     </licenses>
 
