@@ -7,6 +7,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-11-24
+
+### Added
+
+- **HTML image modes (`HtmlImageMode`, `HtmlExportOptions`).** `DocxExporter` HTML export
+  now supports `FILES` (default, unchanged), `DATA_URI` (base64 `data:` URIs), `CID`
+  (`cid:` references for `multipart/related` emails) and `NONE` (no image assets).
+  New overloads: `exportDocument(..., HtmlExportOptions)` and
+  `exportHtml(pkg, outputDir, HtmlExportOptions)`.
+- **`images.json` manifest (`HtmlImageManifest`).** In `CID` mode the ZIP contains the
+  image files plus a manifest mapping every Content-ID to its path, MIME type and size,
+  so the email sender does not have to parse the HTML.
+
+### Fixed
+
+- **ZIP entry names use forward slashes on Windows.** HTML (and PNG) archives previously
+  stored nested paths with backslashes (`index.html_files\image.png`), which violates
+  the ZIP specification and broke consumers matching asset paths.
+
 ## [1.8.0] — 2026-11-23
 
 ### Added

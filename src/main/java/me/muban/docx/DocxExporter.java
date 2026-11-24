@@ -8,7 +8,13 @@ import org.docx4j.convert.out.html.HTMLConversionImageHandler;
 import org.docx4j.fonts.IdentityPlusMapper;
 import org.docx4j.fonts.PhysicalFont;
 import org.docx4j.fonts.PhysicalFonts;
+import org.docx4j.model.images.AbstractConversionImageHandler;
+import org.docx4j.model.images.AbstractWordXmlPicture;
+import org.docx4j.model.images.CidConversionImageHandler;
+import org.docx4j.model.images.DataUriConversionImageHandler;
 import org.docx4j.openpackaging.packages.WordprocessingMLPackage;
+import org.docx4j.openpackaging.parts.WordprocessingML.BinaryPart;
+import org.docx4j.relationships.Relationship;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,6 +22,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -35,10 +42,16 @@ import java.util.zip.ZipOutputStream;
  * packaged into a ZIP archive. The {@link PngExportOptions#zoomRatio()} controls
  * the output resolution ({@code 1.0} = native page size, ~72 DPI).
  *
- * <p>For HTML output, exports using docx4j's XSLT-based HTML exporter. Images are
- * saved to an {@code index.html_files/} subdirectory (matching the JasperReports
- * HTML convention for S2S compatibility). The resulting directory is packaged as a
- * ZIP archive containing {@code index.html} and its assets.
+ * <p>For HTML output, exports using docx4j's XSLT-based HTML exporter. Image
+ * handling is driven by {@link HtmlExportOptions#imageMode()}:
+ * {@link HtmlImageMode#FILES} writes images to an {@code index.html_files/}
+ * subdirectory (default, matching the JasperReports HTML convention for S2S
+ * compatibility), {@link HtmlImageMode#DATA_URI} inlines them as base64,
+ * {@link HtmlImageMode#CID} writes the files <i>and</i> an {@code images.json}
+ * manifest that maps every {@code cid:} reference to its file, and
+ * {@link HtmlImageMode#NONE} writes no image assets at all. The resulting
+ * directory is packaged as a ZIP archive containing {@code index.html} and its
+ * assets.
  *
  * <p><b>Font mapper ordering:</b> {@code setFontMapper()} must be called before
  * {@code FOSettings.setOpcPackage()}, because {@code setOpcPackage()} uses the mapper
@@ -72,6 +85,35 @@ public class DocxExporter {
                                          PdfSecurityCallback securityCallback,
                                          TxtExportOptions txtOptions,
                                          PngExportOptions pngOptions) {
+        return exportDocument(wordPackage, format, outputDir, pdfOptions, securityCallback,
+                txtOptions, pngOptions, null);
+    }
+
+    /**
+     * Export the filled document to the requested format, with HTML-specific options.
+     *
+     * @param wordPackage    the filled DOCX document
+     * @param format         output format: {@code "docx"}, {@code "pdf"}, {@code "html"},
+     *                       {@code "txt"}, or {@code "png"}
+     * @param outputDir      directory to write the output file to (created if needed)
+     * @param pdfOptions     optional PDF security options (only used for PDF output); may be null
+     * @param securityCallback optional callback to apply PDF encryption; may be null
+     * @param txtOptions     optional TXT export options (only used for TXT output); may be null
+     * @param pngOptions     optional PNG export options (only used for PNG output); may be null
+     * @param htmlOptions    optional HTML export options (only used for HTML output);
+     *                       {@code null} resolves to {@link HtmlExportOptions#defaults()}
+     * @return absolute path to the generated file (ZIP archive for HTML and PNG formats)
+     * @throws MubanDocxException if export fails
+     * @throws UnsupportedOutputFormatException if format is not supported
+     */
+    public static String exportDocument(WordprocessingMLPackage wordPackage,
+                                         String format,
+                                         String outputDir,
+                                         PdfExportOptions pdfOptions,
+                                         PdfSecurityCallback securityCallback,
+                                         TxtExportOptions txtOptions,
+                                         PngExportOptions pngOptions,
+                                         HtmlExportOptions htmlOptions) {
         try {
             Files.createDirectories(Paths.get(outputDir));
         } catch (Exception e) {
@@ -98,7 +140,7 @@ public class DocxExporter {
             }
             case "html" -> {
                 outputPath = outputDir + File.separator + filename + ".zip";
-                exportToHtml(wordPackage, outputDir, filename, outputPath);
+                exportToHtml(wordPackage, outputDir, filename, outputPath, htmlOptions);
             }
             case "txt" -> {
                 outputPath = outputDir + File.separator + filename + ".txt";
@@ -164,6 +206,19 @@ public class DocxExporter {
      */
     public static String exportHtml(WordprocessingMLPackage wordPackage, String outputDir) {
         return exportDocument(wordPackage, "html", outputDir, null, null, null);
+    }
+
+    /**
+     * Export to HTML as ZIP archive with custom image handling.
+     *
+     * @param wordPackage the filled DOCX document
+     * @param outputDir   directory to write the ZIP archive to
+     * @param htmlOptions HTML export options; {@code null} resolves to the defaults
+     * @return absolute path to the generated ZIP archive
+     */
+    public static String exportHtml(WordprocessingMLPackage wordPackage, String outputDir,
+                                     HtmlExportOptions htmlOptions) {
+        return exportDocument(wordPackage, "html", outputDir, null, null, null, null, htmlOptions);
     }
 
     /**
@@ -384,14 +439,17 @@ public class DocxExporter {
     /**
      * Internal HTML export via docx4j's XSLT-based HTML exporter.
      *
-     * <p>Creates a temporary directory with {@code index.html} and an
-     * {@code index.html_files/} subdirectory for images, then packages
-     * everything into a ZIP archive.
+     * <p>Creates a temporary directory with {@code index.html} (plus
+     * {@code index.html_files/} for image modes that need it), then packages
+     * everything into a ZIP archive. In {@link HtmlImageMode#CID} mode the
+     * images are written to {@code index.html_files/} and an
+     * {@link HtmlImageManifest} is added next to {@code index.html}.
      */
     private static void exportToHtml(WordprocessingMLPackage wordPackage,
                                       String outputDir,
                                       String dirName,
-                                      String zipOutputPath) {
+                                      String zipOutputPath,
+                                      HtmlExportOptions htmlOptions) {
         // Resolve table conditional formatting (borders, shading, text formatting)
         // before HTML export — same as PDF pipeline — because the XSLT exporter
         // doesn't resolve Word's tblStylePr/cnfStyle references.
@@ -404,26 +462,48 @@ public class DocxExporter {
             log.warn("Could not set up font mapper for HTML export: {}", e.getMessage());
         }
 
+        HtmlImageMode imageMode = (htmlOptions != null ? htmlOptions : HtmlExportOptions.defaults())
+                .imageMode();
+
         Path htmlDir = Paths.get(outputDir, dirName);
+        Path imageDir = htmlDir.resolve("index.html_files");
         try {
             Files.createDirectories(htmlDir);
-
-            String imageDirPath = htmlDir.resolve("index.html_files").toString();
-            Files.createDirectories(Paths.get(imageDirPath));
 
             // Export HTML using docx4j
             HTMLSettings htmlSettings = Docx4J.createHTMLSettings();
             htmlSettings.setOpcPackage(wordPackage);
             htmlSettings.setFontMapper(wordPackage.getFontMapper());
-            htmlSettings.setImageDirPath(imageDirPath);
-            htmlSettings.setImageTargetUri("index.html_files/");
-            htmlSettings.setImageHandler(
-                    new HTMLConversionImageHandler(imageDirPath, "index.html_files/", true));
+
+            CidConversionImageHandler cidHandler = null;
+            switch (imageMode) {
+                case FILES -> {
+                    Files.createDirectories(imageDir);
+                    String imageDirPath = imageDir.toString();
+                    htmlSettings.setImageDirPath(imageDirPath);
+                    htmlSettings.setImageTargetUri("index.html_files/");
+                    htmlSettings.setImageHandler(
+                            new HTMLConversionImageHandler(imageDirPath, "index.html_files/", true));
+                }
+                case DATA_URI -> htmlSettings.setImageHandler(new DataUriConversionImageHandler());
+                case CID -> {
+                    Files.createDirectories(imageDir);
+                    cidHandler = new CidConversionImageHandler("muban");
+                    htmlSettings.setImageHandler(cidHandler);
+                }
+                case NONE -> htmlSettings.setImageHandler(new NoneImageHandler());
+            }
 
             Path indexHtml = htmlDir.resolve("index.html");
             try (OutputStream os = new FileOutputStream(indexHtml.toFile())) {
                 Docx4J.toHTML(htmlSettings, os, Docx4J.FLAG_EXPORT_PREFER_XSL);
             }
+
+            if (cidHandler != null) {
+                writeCidImages(cidHandler.getImages(), imageDir, htmlDir);
+            }
+
+            log.debug("HTML export completed with image mode {}", imageMode);
 
             // Package into ZIP archive
             zipDirectory(htmlDir, zipOutputPath);
@@ -433,6 +513,70 @@ public class DocxExporter {
         } finally {
             // Clean up temporary HTML directory
             deleteDirectoryQuietly(htmlDir);
+        }
+    }
+
+    /**
+     * Writes the images collected by the {@code cid:} handler next to
+     * {@code index.html} and records their Content-IDs in the manifest.
+     */
+    private static void writeCidImages(List<CidConversionImageHandler.CidImage> images,
+                                       Path imageDir, Path htmlDir) throws IOException {
+        List<HtmlImageManifest.Entry> entries = new ArrayList<>(images.size());
+        for (CidConversionImageHandler.CidImage image : images) {
+            String fileName = uniqueImageFileName(imageDir, image.getName());
+            byte[] bytes = image.getBytes();
+            Files.write(imageDir.resolve(fileName), bytes);
+            entries.add(new HtmlImageManifest.Entry(
+                    image.getContentId(),
+                    "index.html_files/" + fileName,
+                    image.getContentType(),
+                    bytes.length));
+        }
+        HtmlImageManifest.write(htmlDir.resolve(HtmlImageManifest.FILE_NAME), entries);
+        log.debug("CID image manifest written ({} image(s))", entries.size());
+    }
+
+    /**
+     * Returns a file name that does not collide with an image already written in
+     * this export (docx4j names images after their part, which is unique, but a
+     * template may still carry same-named parts in different folders).
+     */
+    private static String uniqueImageFileName(Path imageDir, String name) {
+        String candidate = name;
+        int counter = 1;
+        while (Files.exists(imageDir.resolve(candidate))) {
+            candidate = counter++ + "-" + name;
+        }
+        return candidate;
+    }
+
+    /**
+     * Image handler for {@link HtmlImageMode#NONE}: writes nothing and returns an
+     * empty URI. The caller is responsible for removing the resulting empty image
+     * elements (the Muban service strips them in HTML post-processing).
+     */
+    private static final class NoneImageHandler extends AbstractConversionImageHandler {
+
+        NoneImageHandler() {
+            super("", false);
+        }
+
+        @Override
+        protected String handleInternalImage(AbstractWordXmlPicture picture,
+                                             Relationship relationship,
+                                             BinaryPart binaryPart) {
+            return "";
+        }
+
+        @Override
+        protected String createStoredImage(BinaryPart binaryPart, byte[] bytes) {
+            return "";
+        }
+
+        @Override
+        public boolean isInline() {
+            return false;
         }
     }
 
@@ -447,7 +591,8 @@ public class DocxExporter {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs)
                         throws IOException {
-                    String entryName = rootName + "/" + sourceDir.relativize(dir);
+                    String relative = sourceDir.relativize(dir).toString().replace('\\', '/');
+                    String entryName = rootName + "/" + relative;
                     if (!entryName.endsWith("/")) entryName += "/";
                     zos.putNextEntry(new ZipEntry(entryName));
                     zos.closeEntry();
@@ -457,7 +602,8 @@ public class DocxExporter {
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
                         throws IOException {
-                    String entryName = rootName + "/" + sourceDir.relativize(file);
+                    String relative = sourceDir.relativize(file).toString().replace('\\', '/');
+                    String entryName = rootName + "/" + relative;
                     zos.putNextEntry(new ZipEntry(entryName));
                     Files.copy(file, zos);
                     zos.closeEntry();
